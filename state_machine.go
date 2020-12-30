@@ -13,19 +13,21 @@ import (
 
 var (
 	ErrLeaderStepdown = errors.New("leader stepdown")
+	ErrShutdown       = errors.New("node shutdown")
 )
 
 type NodeID uint64
 
 var None NodeID
 
+type LogHeader struct {
+	Term, Index uint64
+}
+
 type RequestVote struct {
 	Term      uint64
 	Candidate NodeID
-	LastLog   struct {
-		Term  uint64
-		Index uint64
-	}
+	LastLog   LogHeader
 }
 
 type RequestVoteResponse struct {
@@ -35,12 +37,9 @@ type RequestVoteResponse struct {
 }
 
 type AppendEntries struct {
-	Term    uint64
-	Leader  NodeID
-	PrevLog struct {
-		Term  uint64
-		Index uint64
-	}
+	Term     uint64
+	Leader   NodeID
+	PrevLog  LogHeader
 	Commited uint64
 	Entries  []*raftlog.LogEntry
 }
@@ -49,15 +48,11 @@ type AppendEntriesResponse struct {
 	Term     uint64
 	Follower NodeID
 	Success  bool
-	LastLog  struct {
-		Index uint64
-		Term  uint64
-	}
+	LastLog  LogHeader
 }
 
 type Proposal struct {
 	ctx    context.Context
-	cancel func()
 	result chan error
 	Entry  *raftlog.LogEntry
 }
@@ -72,23 +67,18 @@ func (p *Proposal) Complete(err error) {
 	}
 }
 
-func (p *Proposal) Wait() error {
+func (p *Proposal) Wait(ctx context.Context) error {
 	if p.ctx == nil {
 		panic("not waitable proposal")
 	}
 	select {
 	case <-p.ctx.Done():
-		return context.Canceled
+		return ErrShutdown
 	case err := <-p.result:
 		return err
+	case <-p.ctx.Done():
+		return p.ctx.Err()
 	}
-}
-
-func (p *Proposal) Cancel() {
-	if p.ctx == nil {
-		panic("not waitable proposal")
-	}
-	p.cancel()
 }
 
 type MessageTo struct {
@@ -325,7 +315,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		}
 	}
 	if len(msg.Entries) == 0 {
-		f.logger.Debugw("received heartbeat", "from", msg.Leader)
+		f.logger.Debugw("received heartbeat", "leader", msg.Leader)
 		f.send(u, &AppendEntriesResponse{
 			Term:     f.term,
 			Follower: f.id,
@@ -368,7 +358,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	var grant bool
 	if msg.Term < f.term {
 		grant = false
-	} else if msg.Term == f.term {
+	} else if msg.Term == f.term && f.votedFor != None {
 		// this is kind of an optimization to allow faster recovery
 		// if candidate crashed (connection timed out) before persisting new term.
 		// can be removed to simplify things a bit.
@@ -403,7 +393,7 @@ func toCandidate(s *state, u *Update) *candidate {
 	s.votedFor = s.id
 
 	c := candidate{state: s, votes: map[NodeID]struct{}{
-		s.id: struct{}{},
+		s.id: {},
 	}}
 
 	last, err := s.log.Last()
@@ -451,7 +441,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 			Term:  c.term,
 		}, m.Candidate)
 	case *AppendEntries:
-		// leader might have been elected in the same term as this candidate
+		// leader might have been elected in the same term as the candidate
 		if m.Term >= c.term {
 			return toFollower(c.state, m.Term)
 		}
