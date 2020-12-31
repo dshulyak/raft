@@ -2,6 +2,7 @@ package raft
 
 import (
 	"flag"
+	"fmt"
 	"testing"
 
 	"github.com/dshulyak/raftlog"
@@ -38,6 +39,7 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 	}
 
 	cluster := &testCluster{
+		timeoutValue:  maxTicks,
 		states:        map[NodeID]*StateMachine{},
 		blockedRoutes: map[NodeID]map[NodeID]struct{}{},
 	}
@@ -58,9 +60,23 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 }
 
 type testCluster struct {
+	timeoutValue int
+
 	states        map[NodeID]*StateMachine
 	messages      []interface{}
 	blockedRoutes map[NodeID]map[NodeID]struct{}
+}
+
+func (t *testCluster) size() int {
+	return len(t.states)
+}
+
+func (t *testCluster) propose(id NodeID, entry *raftlog.LogEntry) *Update {
+	return t.states[id].Next(&Proposal{Entry: entry})
+}
+
+func (t *testCluster) triggerTimeout(id NodeID) *Update {
+	return t.states[id].Tick(t.timeoutValue)
 }
 
 func (c *testCluster) blockRoute(from, to NodeID) {
@@ -125,11 +141,13 @@ func (c *testCluster) resetHistory() {
 	c.messages = nil
 }
 
-func TestRaftReplicationAfterInitialElection(t *testing.T) {
-	timeout := 20
-	cluster := getTestCluster(t, 3, 0, timeout) // 3 node cluster
-	update := cluster.states[1].Tick(timeout)
-	require.NotNil(t, update)
+func testReplicationAfterElection(t *testing.T, term uint64) {
+	cluster := getTestCluster(t, 3, 0, 20)
+	var update *Update
+	for i := uint64(0); i < term; i++ {
+		update = cluster.triggerTimeout(1)
+		require.NotNil(t, update)
+	}
 	update = cluster.run(t, update, 1)
 	require.NotNil(t, update)
 	require.Len(t, update.Proposals, 1)
@@ -137,56 +155,62 @@ func TestRaftReplicationAfterInitialElection(t *testing.T) {
 	require.Equal(t, raftlog.LogNoop, entry.OpType)
 	cluster.compareMsgHistories(t, []interface{}{
 		&RequestVote{
-			Term:      1,
+			Term:      term,
 			Candidate: 1,
 		},
 		&RequestVote{
-			Term:      1,
+			Term:      term,
 			Candidate: 1,
 		},
 		&RequestVoteResponse{
-			Term:        1,
+			Term:        term,
 			Voter:       2,
 			VoteGranted: true,
 		},
 		&RequestVoteResponse{
-			Term:        1,
+			Term:        term,
 			Voter:       3,
 			VoteGranted: true,
 		},
 		&AppendEntries{
-			Term:    1,
+			Term:    term,
 			Leader:  1,
-			Entries: []*raftlog.LogEntry{{Index: 1, Term: 1, OpType: raftlog.LogNoop}},
+			Entries: []*raftlog.LogEntry{{Index: 1, Term: term, OpType: raftlog.LogNoop}},
 		},
 		&AppendEntries{
-			Term:    1,
+			Term:    term,
 			Leader:  1,
-			Entries: []*raftlog.LogEntry{{Index: 1, Term: 1, OpType: raftlog.LogNoop}},
+			Entries: []*raftlog.LogEntry{{Index: 1, Term: term, OpType: raftlog.LogNoop}},
 		},
 		&AppendEntriesResponse{
-			Term:     1,
+			Term:     term,
 			Follower: 2,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: 1},
+			LastLog:  LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntriesResponse{
-			Term:     1,
+			Term:     term,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: 1},
+			LastLog:  LogHeader{Index: 1, Term: term},
 		},
 	})
 }
 
-func TestRaftFailedElection(t *testing.T) {
-	timeout := 20
-	n := 3
-	cluster := getTestCluster(t, n, 0, timeout) // 3 node cluster
-	for i := 1; i < n; i++ {
-		_ = cluster.states[NodeID(i)].Tick(timeout)
+func TestRaftReplicationAfterInitialElection(t *testing.T) {
+	for term := uint64(1); term <= 3; term++ {
+		t.Run(fmt.Sprintf("Term_%d", term), func(t *testing.T) {
+			testReplicationAfterElection(t, term)
+		})
 	}
-	update := cluster.states[3].Tick(timeout)
+}
+
+func TestRaftFailedElection(t *testing.T) {
+	cluster := getTestCluster(t, 3, 0, 20) // 3 node cluster
+	for i := 1; i < cluster.size(); i++ {
+		_ = cluster.triggerTimeout(NodeID(i))
+	}
+	update := cluster.triggerTimeout(3)
 	require.NotNil(t, update)
 	_ = cluster.run(t, update, 3)
 	cluster.compareMsgHistories(t, []interface{}{
@@ -210,13 +234,10 @@ func TestRaftFailedElection(t *testing.T) {
 }
 
 func TestRaftLeaderDisrupted(t *testing.T) {
-	timeout := 20
-	n := 3
-	cluster := getTestCluster(t, n, 0, timeout)
-	cluster.run(t, cluster.states[1].Tick(timeout), 1)
+	cluster := getTestCluster(t, 3, 0, 20)
+	cluster.run(t, cluster.triggerTimeout(1), 1)
 	cluster.resetHistory()
-
-	cluster.run(t, cluster.states[2].Tick(timeout), 2)
+	cluster.run(t, cluster.triggerTimeout(2), 2)
 	cluster.compareMsgHistories(t, []interface{}{
 		&RequestVote{
 			Term:      2,
@@ -263,4 +284,71 @@ func TestRaftLeaderDisrupted(t *testing.T) {
 			LastLog:  LogHeader{Index: 2, Term: 2},
 		},
 	})
+}
+
+func TestRaftCandidateTransitionToFollower(t *testing.T) {
+	cluster := getTestCluster(t, 3, 0, 1)
+	_ = cluster.triggerTimeout(1)
+	_ = cluster.run(t, cluster.triggerTimeout(2), 2)
+	cluster.compareMsgHistories(t, []interface{}{
+		&RequestVote{
+			Term:      1,
+			Candidate: 2,
+		},
+		&RequestVote{
+			Term:      1,
+			Candidate: 2,
+		},
+		&RequestVoteResponse{
+			Term:  1,
+			Voter: 1,
+		},
+		&RequestVoteResponse{
+			Term:        1,
+			Voter:       3,
+			VoteGranted: true,
+		},
+		&AppendEntries{
+			Term:    1,
+			Leader:  2,
+			Entries: []*raftlog.LogEntry{{Index: 1, Term: 1, OpType: raftlog.LogNoop}},
+		},
+		&AppendEntries{
+			Term:    1,
+			Leader:  2,
+			Entries: []*raftlog.LogEntry{{Index: 1, Term: 1, OpType: raftlog.LogNoop}},
+		},
+		&AppendEntriesResponse{
+			Term:     1,
+			Follower: 1,
+			Success:  true,
+			LastLog:  LogHeader{Index: 1, Term: 1},
+		},
+		&AppendEntriesResponse{
+			Term:     1,
+			Follower: 3,
+			Success:  true,
+			LastLog:  LogHeader{Index: 1, Term: 1},
+		},
+	})
+}
+
+func TestRaftReplicatonWithMajority(t *testing.T) {
+	cluster := getTestCluster(t, 5, 0, 1)
+	cluster.blockRoute(1, 4)
+	cluster.blockRoute(1, 5)
+
+	update := cluster.run(t, cluster.triggerTimeout(1), 1)
+	require.Len(t, update.Proposals, 1)
+}
+
+func TestRaftProposalReplication(t *testing.T) {
+	cluster := getTestCluster(t, 3, 0, 1)
+	_ = cluster.run(t, cluster.triggerTimeout(1), 1)
+	cluster.resetHistory()
+
+	update := cluster.run(t, cluster.propose(1, &raftlog.LogEntry{OpType: raftlog.LogApplication}), 1)
+	require.NotNil(t, update)
+	require.Len(t, update.Proposals, 1)
+	require.Equal(t, raftlog.LogApplication, update.Proposals[0].Entry.OpType)
 }

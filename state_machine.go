@@ -490,12 +490,9 @@ func toLeader(s *state, u *Update) *leader {
 type leader struct {
 	*state
 	nextLogIndex uint64
-	prevLog      struct {
-		Index uint64
-		Term  uint64
-	}
-	matchIndex map[NodeID]uint64
-	inflight   *list.List
+	prevLog      LogHeader
+	matchIndex   map[NodeID]uint64
+	inflight     *list.List
 }
 
 func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
@@ -616,6 +613,9 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	// leader is excluded from the matchIndex slice.
 	// so the size is always N-1
 	idx := indexes[l.majority()-1]
+	if idx == 0 {
+		return nil
+	}
 	entry, err := l.log.Get(int(idx) - 1)
 	l.must(err, "failed to get entry")
 	if entry.Term != l.term {
