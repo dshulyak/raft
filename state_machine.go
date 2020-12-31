@@ -107,9 +107,8 @@ type state struct {
 	configuration *Configuration
 
 	// FIXME term and votedFor must be durable
-	term     uint64
-	votedFor NodeID
-	log      *raftlog.Storage
+	*DurableState
+	log *raftlog.Storage
 
 	commitIndex uint64
 }
@@ -189,10 +188,11 @@ type StateMachineConfig struct {
 	MinTicks, MaxTicks int
 }
 
-func NewStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog.Storage) *StateMachine {
+func NewStateMachine(logger *zap.Logger, ds *DurableState, config StateMachineConfig, log *raftlog.Storage) *StateMachine {
 	return &StateMachine{
 		update: &Update{},
 		role: toFollower(&state{
+			DurableState:  ds,
 			logger:        logger.Sugar(),
 			minTicks:      config.MinTicks,
 			maxTicks:      config.MaxTicks,
@@ -377,8 +377,11 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		"last log index", msg.LastLog.Index,
 		"last log term", msg.LastLog.Term,
 	)
-	f.votedFor = msg.Candidate
-	f.term = msg.Term
+	if grant {
+		f.votedFor = msg.Candidate
+		f.term = msg.Term
+		f.must(f.Sync(), "failed to sync state")
+	}
 	f.send(u, &RequestVoteResponse{
 		Term:        f.term,
 		Voter:       f.id,

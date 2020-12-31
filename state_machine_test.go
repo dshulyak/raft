@@ -3,6 +3,8 @@ package raft
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/dshulyak/raftlog"
@@ -44,12 +46,22 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 		blockedRoutes: map[NodeID]map[NodeID]struct{}{},
 	}
 	for _, node := range configuration.Nodes {
+		f, err := ioutil.TempFile("", "durable-state-")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			f.Close()
+			os.Remove(f.Name())
+		})
+
+		ds, err := NewDurableState(f)
+		require.NoError(t, err)
+
 		log, err := raftlog.New(logger, nil, nil)
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, log.Delete())
 		})
-		cluster.states[node.ID] = NewStateMachine(logger, StateMachineConfig{
+		cluster.states[node.ID] = NewStateMachine(logger, ds, StateMachineConfig{
 			ID:            node.ID,
 			MinTicks:      minTicks,
 			MaxTicks:      maxTicks,
