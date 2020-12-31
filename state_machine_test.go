@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"pgregory.net/rapid"
 )
 
 type TestingHelper interface {
@@ -41,6 +42,7 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 	}
 
 	cluster := &testCluster{
+		t:             t,
 		logger:        logger,
 		minTicks:      minTicks,
 		maxTicks:      maxTicks,
@@ -74,6 +76,7 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 }
 
 type testCluster struct {
+	t      TestingHelper
 	logger *zap.Logger
 
 	minTicks, maxTicks int
@@ -101,11 +104,15 @@ func (t *testCluster) size() int {
 }
 
 func (t *testCluster) propose(id NodeID, entry *raftlog.LogEntry) *Update {
-	return t.states[id].Next(&Proposal{Entry: entry})
+	update, err := t.states[id].Next(&Proposal{Entry: entry})
+	require.NoError(t.t, err)
+	return update
 }
 
 func (t *testCluster) triggerTimeout(id NodeID) *Update {
-	return t.states[id].Tick(t.maxTicks)
+	update, err := t.states[id].Tick(t.maxTicks)
+	require.NoError(t.t, err)
+	return update
 }
 
 func (c *testCluster) blockRoute(from, to NodeID) {
@@ -137,21 +144,33 @@ func (c *testCluster) run(t TestingHelper, u *Update, from NodeID) *Update {
 	stack := []*Update{u}
 	for len(stack) > 0 {
 		u = stack[0]
+		stack[0] = nil
+		stack = stack[1:]
+		if u == nil {
+			continue
+		}
 		for _, msg := range u.Msgs {
 			if c.isBlocked(from, msg.To) {
 				continue
 			}
 			sm := c.states[msg.To]
 			c.messages = append(c.messages, msg.Message)
-			update := sm.Next(msg.Message)
+			update, err := sm.Next(msg.Message)
+			require.NoError(t, err)
 			if update != nil {
 				stack = append(stack, update)
 			}
 		}
-		stack[0] = nil
-		stack = stack[1:]
 	}
 	return u
+}
+
+func (c *testCluster) iterateLogs(f func(*raftlog.Storage) bool) {
+	for _, log := range c.logs {
+		if !f(log) {
+			return
+		}
+	}
 }
 
 func (c *testCluster) compareMsgHistories(t TestingHelper, expected []interface{}) {
@@ -369,6 +388,7 @@ func TestRaftReplicatonWithMajority(t *testing.T) {
 
 	update := cluster.run(t, cluster.triggerTimeout(1), 1)
 	require.Len(t, update.Proposals, 1)
+	require.Equal(t, raftlog.LogNoop, update.Proposals[0].Entry.OpType)
 }
 
 func TestRaftProposalReplication(t *testing.T) {
@@ -380,4 +400,105 @@ func TestRaftProposalReplication(t *testing.T) {
 	require.NotNil(t, update)
 	require.Len(t, update.Proposals, 1)
 	require.Equal(t, raftlog.LogApplication, update.Proposals[0].Entry.OpType)
+}
+
+type rapidCleanup struct {
+	*rapid.T
+	cleanups []func()
+}
+
+func (c *rapidCleanup) Cleanup(f func()) {
+	c.cleanups = append(c.cleanups, f)
+}
+
+func (c *rapidCleanup) Run() {
+	for i := len(c.cleanups) - 1; i >= 0; i-- {
+		c.cleanups[i]()
+	}
+}
+
+type rapidTestState struct {
+	leader NodeID
+	commit LogHeader
+}
+
+type clusterMachine struct {
+	cluster *testCluster
+	cleanup *rapidCleanup
+
+	state *rapidTestState
+}
+
+func (c *clusterMachine) Init(t *rapid.T) {
+	c.cleanup = &rapidCleanup{T: t}
+	n := rapid.IntRange(3, 7).Draw(t, "n").(int)
+	c.cluster = getTestCluster(c.cleanup, n, 0, 1)
+	c.state = &rapidTestState{}
+}
+
+func (c *clusterMachine) Timeout(t *rapid.T) {
+	node := rapid.IntRange(1, c.cluster.size()).Draw(t, "timeout_node").(int)
+	update := c.cluster.run(c.cleanup, c.cluster.triggerTimeout(NodeID(node)), NodeID(node))
+	if update != nil && update.Elected {
+		c.state.leader = NodeID(node)
+	}
+}
+
+func (c *clusterMachine) Restart(t *rapid.T) {
+	node := rapid.IntRange(1, c.cluster.size()).Draw(t, "restart_node").(int)
+	c.cluster.restart(NodeID(node))
+}
+
+func (c *clusterMachine) Partition(t *rapid.T) {
+	from := rapid.IntRange(1, c.cluster.size()).Draw(t, "block_from").(int)
+	to := rapid.IntRange(1, c.cluster.size()).Draw(t, "block_to").(int)
+	if from != to {
+		c.cluster.blockRoute(NodeID(from), NodeID(to))
+	}
+}
+
+func (c *clusterMachine) Restore(t *rapid.T) {
+	c.cluster.restoreRoutes()
+}
+
+func (c *clusterMachine) Propose(t *rapid.T) {
+	if c.state.leader == None {
+		t.Skip("leader is not yet elected")
+	}
+	update := c.cluster.propose(c.state.leader, &raftlog.LogEntry{OpType: raftlog.LogApplication})
+	update = c.cluster.run(c.cleanup, update, c.state.leader)
+	if update != nil && update.CommitLog.Term != 0 {
+		c.state.commit = update.CommitLog
+	}
+}
+
+func (c *clusterMachine) Check(t *rapid.T) {
+	if c.state.commit.Term == 0 && c.state.commit.Index == 0 {
+		//t.Skip("nothing was commited yet")
+		return
+	}
+	majority := c.cluster.size()/2 + 1
+	n := 0
+	c.cluster.iterateLogs(func(log *raftlog.Storage) bool {
+		entry, err := log.Get(int(c.state.commit.Index))
+		if err != nil {
+			require.EqualError(t, err, raftlog.ErrEntryNotFound.Error())
+		}
+		require.Equal(t, c.state.commit.Term, entry.Term)
+		n++
+		return true
+	})
+	require.LessOrEqual(t, majority, n,
+		"commited entry is not replicated on the majority of servers")
+}
+
+func (c *clusterMachine) Cleanup() {
+	c.cleanup.Run()
+}
+
+func TestRaftConsistency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("consistency testing is skipped")
+	}
+	rapid.Check(t, rapid.Run(new(clusterMachine)))
 }

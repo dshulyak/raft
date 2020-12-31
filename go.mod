@@ -7,6 +7,7 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/tysonmote/gommap v0.0.0-20201017170033-6edfc905bae0
 	go.uber.org/zap v1.16.0
+	pgregory.net/rapid v0.4.4
 )
 
 replace github.com/dshulyak/raftlog => ../raftlog

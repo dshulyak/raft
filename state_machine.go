@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sort"
 
@@ -14,6 +15,7 @@ import (
 var (
 	ErrLeaderStepdown = errors.New("leader stepdown")
 	ErrShutdown       = errors.New("node shutdown")
+	ErrUnexpected     = errors.New("unexpected error")
 )
 
 type NodeID uint64
@@ -69,7 +71,7 @@ func (p *Proposal) Complete(err error) {
 
 func (p *Proposal) Wait(ctx context.Context) error {
 	if p.ctx == nil {
-		panic("not waitable proposal")
+		panic("proposal is not fully initialized")
 	}
 	select {
 	case <-p.ctx.Done():
@@ -90,9 +92,8 @@ type Update struct {
 	Updated   bool
 	Msgs      []MessageTo
 	Proposals []*Proposal
-	CommitLog struct {
-		Index, Term uint64
-	}
+	Elected   bool
+	CommitLog LogHeader
 }
 
 type state struct {
@@ -193,7 +194,7 @@ func NewStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog
 		update: &Update{},
 		role: toFollower(&state{
 			DurableState:  ds,
-			logger:        logger.Sugar(),
+			logger:        logger.With(zap.Uint64("ID", uint64(config.ID))).Sugar(),
 			minTicks:      config.MinTicks,
 			maxTicks:      config.MaxTicks,
 			id:            config.ID,
@@ -208,20 +209,30 @@ type StateMachine struct {
 	update *Update
 }
 
-func (s *StateMachine) Tick(n int) *Update {
+func (s *StateMachine) Tick(n int) (u *Update, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
+		}
+	}()
 	r := s.role.tick(n, s.update)
 	if r != nil {
 		s.role = r
 	}
 	if s.update.Updated {
-		u := s.update
+		u = s.update
 		s.update = &Update{}
-		return u
+		return
 	}
-	return nil
+	return
 }
 
-func (s *StateMachine) Next(msg interface{}) *Update {
+func (s *StateMachine) Next(msg interface{}) (u *Update, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
+		}
+	}()
 	r := s.role.next(msg, s.update)
 	for r != nil {
 		s.role = r
@@ -231,11 +242,11 @@ func (s *StateMachine) Next(msg interface{}) *Update {
 		r = s.role.next(msg, s.update)
 	}
 	if s.update.Updated {
-		u := s.update
+		u = s.update
 		s.update = &Update{}
-		return u
+		return
 	}
-	return nil
+	return
 }
 
 func toFollower(s *state, term uint64) *follower {
@@ -291,6 +302,8 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		"leader", msg.Leader,
 		"count", len(msg.Entries),
 		"replica", f.id,
+		"prev log term", msg.PrevLog.Term,
+		"prev log index", msg.PrevLog.Index,
 	)
 	f.resetTicks()
 	if !(f.log.IsEmpty() && msg.PrevLog.Term == 0) {
@@ -302,16 +315,11 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			}, msg.Leader)
 			return nil
 		} else if err != nil {
-			f.must(err, "failed log get")
+			f.must(err, "failed log get entry")
 		}
 		if entry.Term != msg.PrevLog.Term {
-			f.logger.Debugw("deleting log file", "starting at index", msg.PrevLog.Index)
+			f.logger.Debugw("deleting log file", "at index", msg.PrevLog.Index, "local prev term", entry.Term, "new term", msg.PrevLog.Term)
 			f.must(f.log.DeleteFrom(int(msg.PrevLog.Index)), "failed log deletion")
-			f.send(u, &AppendEntriesResponse{
-				Term:     f.term,
-				Follower: f.id,
-			}, msg.Leader)
-			return nil
 		}
 	}
 	if len(msg.Entries) == 0 {
@@ -329,6 +337,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		last = msg.Entries[i]
 		f.must(f.log.Append(last), "failed to append log")
 	}
+	f.logger.Debugw("last appended entry", "index", last.Index, "term", last.Term)
 	// TODO as an optimization we don't need to fsync in state machine
 	// we only need to fsync before replying to the leader or before sending
 	// logs to the Application
@@ -487,6 +496,8 @@ func toLeader(s *state, u *Update) *leader {
 	l.sendProposals(u, &Proposal{Entry: &raftlog.LogEntry{
 		OpType: raftlog.LogNoop,
 	}})
+	u.Elected = true
+	u.Updated = true
 	return &l
 
 }
@@ -513,6 +524,8 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		msg.Entries[i].Index = l.nextLogIndex
 		msg.Entries[i].Term = l.term
 		l.nextLogIndex++
+		l.logger.Debugw("append entry on a leader",
+			"index", msg.Entries[i].Index, "term", msg.Entries[i].Term)
 		l.must(l.log.Append(msg.Entries[i]), "failed to append a record")
 		_ = l.inflight.PushBack(proposals[i])
 	}
@@ -582,6 +595,8 @@ func (l *leader) next(msg interface{}, u *Update) role {
 		return l.onAppendEntriesResponse(m, u)
 	case *Proposal:
 		l.sendProposals(u, m)
+	case []*Proposal:
+		l.sendProposals(u, m...)
 	}
 	return nil
 }
@@ -601,7 +616,7 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	}
 	l.matchIndex[m.Follower] = m.LastLog.Index
 	if m.LastLog.Index <= l.commitIndex {
-		// oudated is catching up
+		// oudated server is catching up
 		return nil
 	}
 	// we received an actual update. time to **maybe** commit new entries
@@ -614,12 +629,12 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	sort.Slice(indexes, func(i, j int) bool {
 		return indexes[i] < indexes[j]
 	})
-	// leader is excluded from the matchIndex slice.
-	// so the size is always N-1
+	// leader is excluded from the matchIndex slice. so the size is always N-1
 	idx := indexes[l.majority()-1]
 	if idx == 0 {
 		return nil
 	}
+	l.logger.Debugw("ready to update commit idx", "index", idx)
 	entry, err := l.log.Get(int(idx) - 1)
 	l.must(err, "failed to get entry")
 	if entry.Term != l.term {
