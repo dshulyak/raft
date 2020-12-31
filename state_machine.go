@@ -365,6 +365,11 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		grant = f.votedFor == msg.Candidate
 	} else {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
+		if grant {
+			f.votedFor = msg.Candidate
+			f.term = msg.Term
+			f.must(f.Sync(), "failed to sync durable state")
+		}
 	}
 	context := "vote is not granted"
 	if grant {
@@ -377,11 +382,6 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		"last log index", msg.LastLog.Index,
 		"last log term", msg.LastLog.Term,
 	)
-	if grant {
-		f.votedFor = msg.Candidate
-		f.term = msg.Term
-		f.must(f.Sync(), "failed to sync state")
-	}
 	f.send(u, &RequestVoteResponse{
 		Term:        f.term,
 		Voter:       f.id,
@@ -394,6 +394,7 @@ func toCandidate(s *state, u *Update) *candidate {
 	s.resetTicks()
 	s.term++
 	s.votedFor = s.id
+	s.must(s.Sync(), "failed to sync durable state")
 
 	c := candidate{state: s, votes: map[NodeID]struct{}{
 		s.id: {},
