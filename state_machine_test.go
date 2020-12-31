@@ -41,7 +41,12 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 	}
 
 	cluster := &testCluster{
-		timeoutValue:  maxTicks,
+		logger:        logger,
+		minTicks:      minTicks,
+		maxTicks:      maxTicks,
+		configuration: configuration,
+		logs:          map[NodeID]*raftlog.Storage{},
+		ds:            map[NodeID]*DurableState{},
 		states:        map[NodeID]*StateMachine{},
 		blockedRoutes: map[NodeID]map[NodeID]struct{}{},
 	}
@@ -55,28 +60,40 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 
 		ds, err := NewDurableState(f)
 		require.NoError(t, err)
+		cluster.ds[node.ID] = ds
 
 		log, err := raftlog.New(logger, nil, nil)
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, log.Delete())
 		})
-		cluster.states[node.ID] = NewStateMachine(logger, ds, StateMachineConfig{
-			ID:            node.ID,
-			MinTicks:      minTicks,
-			MaxTicks:      maxTicks,
-			Configuration: configuration,
-		}, log)
+		cluster.logs[node.ID] = log
+		cluster.restart(node.ID)
 	}
 	return cluster
 }
 
 type testCluster struct {
-	timeoutValue int
+	logger *zap.Logger
+
+	minTicks, maxTicks int
+	configuration      *Configuration
+
+	logs map[NodeID]*raftlog.Storage
+	ds   map[NodeID]*DurableState
 
 	states        map[NodeID]*StateMachine
 	messages      []interface{}
 	blockedRoutes map[NodeID]map[NodeID]struct{}
+}
+
+func (t *testCluster) restart(id NodeID) {
+	t.states[id] = NewStateMachine(t.logger, StateMachineConfig{
+		ID:            id,
+		MinTicks:      t.minTicks,
+		MaxTicks:      t.maxTicks,
+		Configuration: t.configuration,
+	}, t.logs[id], t.ds[id])
 }
 
 func (t *testCluster) size() int {
@@ -88,7 +105,7 @@ func (t *testCluster) propose(id NodeID, entry *raftlog.LogEntry) *Update {
 }
 
 func (t *testCluster) triggerTimeout(id NodeID) *Update {
-	return t.states[id].Tick(t.timeoutValue)
+	return t.states[id].Tick(t.maxTicks)
 }
 
 func (c *testCluster) blockRoute(from, to NodeID) {

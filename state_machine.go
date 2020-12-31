@@ -188,7 +188,7 @@ type StateMachineConfig struct {
 	MinTicks, MaxTicks int
 }
 
-func NewStateMachine(logger *zap.Logger, ds *DurableState, config StateMachineConfig, log *raftlog.Storage) *StateMachine {
+func NewStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog.Storage, ds *DurableState) *StateMachine {
 	return &StateMachine{
 		update: &Update{},
 		role: toFollower(&state{
