@@ -88,26 +88,41 @@ type MessageTo struct {
 	Message interface{}
 }
 
+type RaftState uint8
+
+const (
+	RaftFollower = iota + 1
+	RaftCandidate
+	RaftLeader
+)
+
+var raftStateString = [...]string{
+	"Empty", "Follower", "Candidate", "Leader",
+}
+
+func (s RaftState) String() string {
+	return raftStateString[s]
+}
+
 type Update struct {
 	Updated   bool
 	Msgs      []MessageTo
 	Proposals []*Proposal
-	Elected   bool
+	State     RaftState
 	CommitLog LogHeader
 }
 
 type state struct {
 	logger *zap.SugaredLogger
 
-	minTicks, maxTicks int
-	ticks              int
+	minElection, maxElection int
+	election                 int
 
 	id     NodeID
 	leader NodeID
 
 	configuration *Configuration
 
-	// FIXME term and votedFor must be durable
 	*DurableState
 	log *raftlog.Storage
 
@@ -175,7 +190,7 @@ func (s *state) send(u *Update, msg interface{}, to ...NodeID) {
 
 func (s *state) resetTicks() {
 	// TODO allow to set custom rand function?
-	s.ticks = rand.Intn(s.minTicks+s.maxTicks) - s.minTicks
+	s.election = rand.Intn(s.minElection+s.maxElection) - s.minElection
 }
 
 type role interface {
@@ -190,17 +205,18 @@ type StateMachineConfig struct {
 }
 
 func NewStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog.Storage, ds *DurableState) *StateMachine {
+	update := &Update{}
 	return &StateMachine{
-		update: &Update{},
+		update: update,
 		role: toFollower(&state{
 			DurableState:  ds,
 			logger:        logger.With(zap.Uint64("ID", uint64(config.ID))).Sugar(),
-			minTicks:      config.MinTicks,
-			maxTicks:      config.MaxTicks,
+			minElection:   config.MinTicks,
+			maxElection:   config.MaxTicks,
 			id:            config.ID,
 			configuration: config.Configuration,
 			log:           log,
-		}, 0),
+		}, 0, update),
 	}
 }
 
@@ -209,7 +225,7 @@ type StateMachine struct {
 	update *Update
 }
 
-func (s *StateMachine) Tick(n int) (u *Update, err error) {
+func (s *StateMachine) Tick(n int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
@@ -219,15 +235,10 @@ func (s *StateMachine) Tick(n int) (u *Update, err error) {
 	if r != nil {
 		s.role = r
 	}
-	if s.update.Updated {
-		u = s.update
-		s.update = &Update{}
-		return
-	}
 	return
 }
 
-func (s *StateMachine) Next(msg interface{}) (u *Update, err error) {
+func (s *StateMachine) Next(msg interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
@@ -241,24 +252,26 @@ func (s *StateMachine) Next(msg interface{}) (u *Update, err error) {
 		// immediatly after the previous change
 		r = s.role.next(msg, s.update)
 	}
-	if s.update.Updated {
-		u = s.update
-		s.update = &Update{}
-		return
-	}
 	return
 }
 
-func toFollower(s *state, term uint64) *follower {
-	// NOTE not sure if it can be harmful.
-	// spec doesn't specify that election timeout must be reset
-	// when candidate or leader transitions to follower because newer term
-	// was observed.
+func (s *StateMachine) Update() *Update {
+	if !s.update.Updated {
+		return nil
+	}
+	u := s.update
+	s.update = &Update{}
+	return u
+}
+
+func toFollower(s *state, term uint64, u *Update) *follower {
 	s.resetTicks()
 	if term > s.term {
 		s.term = term
 		s.votedFor = None
 	}
+	u.State = RaftFollower
+	u.Updated = true
 	return &follower{state: s}
 }
 
@@ -267,8 +280,8 @@ type follower struct {
 }
 
 func (f *follower) tick(n int, u *Update) role {
-	f.ticks -= n
-	if f.ticks <= 0 {
+	f.election -= n
+	if f.election <= 0 {
 		f.logger.Debugw("election timeout elapsed. transitioning to candidate",
 			"id", f.id,
 		)
@@ -424,6 +437,8 @@ func toCandidate(s *state, u *Update) *candidate {
 	request.LastLog.Index = last.Index
 	s.logger.Debugw("starting an election campaign", "candidate", s.id, "term", s.term)
 	s.send(u, request)
+	u.State = RaftCandidate
+	u.Updated = true
 	return &c
 }
 
@@ -433,8 +448,8 @@ type candidate struct {
 }
 
 func (c *candidate) tick(n int, u *Update) role {
-	c.ticks -= n
-	if c.ticks <= 0 {
+	c.election -= n
+	if c.election <= 0 {
 		c.logger.Debugw("election timeout elapsed. transitioning to candidate",
 			"id", c.id,
 		)
@@ -447,7 +462,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 	switch m := msg.(type) {
 	case *RequestVote:
 		if m.Term > c.term {
-			return toFollower(c.state, m.Term)
+			return toFollower(c.state, m.Term, u)
 		}
 		c.send(u, &RequestVoteResponse{
 			Voter: c.id,
@@ -456,15 +471,18 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 	case *AppendEntries:
 		// leader might have been elected in the same term as the candidate
 		if m.Term >= c.term {
-			return toFollower(c.state, m.Term)
+			return toFollower(c.state, m.Term, u)
 		}
 		c.send(u, &AppendEntriesResponse{
 			Follower: c.id,
 			Term:     c.term,
 		}, m.Leader)
 	case *RequestVoteResponse:
+		if m.Term < c.term {
+			return nil
+		}
 		if m.Term > c.term {
-			return toFollower(c.state, m.Term)
+			return toFollower(c.state, m.Term, u)
 		}
 		if !m.VoteGranted {
 			return nil
@@ -496,7 +514,7 @@ func toLeader(s *state, u *Update) *leader {
 	l.sendProposals(u, &Proposal{Entry: &raftlog.LogEntry{
 		OpType: raftlog.LogNoop,
 	}})
-	u.Elected = true
+	u.State = RaftLeader
 	u.Updated = true
 	return &l
 
@@ -545,12 +563,12 @@ func (l *leader) tick(n int, u *Update) role {
 	return nil
 }
 
-func (l *leader) stepdown(term uint64) *follower {
+func (l *leader) stepdown(term uint64, u *Update) *follower {
 	for front := l.inflight.Front(); front != nil; front = front.Next() {
 		proposal := front.Value.(*Proposal)
 		proposal.Complete(ErrLeaderStepdown)
 	}
-	return toFollower(l.state, term)
+	return toFollower(l.state, term, u)
 }
 
 func (l *leader) commitInflight(u *Update, idx uint64) {
@@ -570,7 +588,7 @@ func (l *leader) next(msg interface{}, u *Update) role {
 	switch m := msg.(type) {
 	case *RequestVote:
 		if m.Term > l.term {
-			return l.stepdown(m.Term)
+			return l.stepdown(m.Term, u)
 		}
 		l.send(u, &RequestVoteResponse{
 			Voter: l.id,
@@ -578,7 +596,7 @@ func (l *leader) next(msg interface{}, u *Update) role {
 		}, m.Candidate)
 	case *AppendEntries:
 		if m.Term > l.term {
-			return l.stepdown(m.Term)
+			return l.stepdown(m.Term, u)
 		}
 		l.send(u, &AppendEntriesResponse{
 			Follower: l.id,
@@ -586,11 +604,14 @@ func (l *leader) next(msg interface{}, u *Update) role {
 		}, m.Leader)
 	case *RequestVoteResponse:
 		if m.Term > l.term {
-			return l.stepdown(m.Term)
+			return l.stepdown(m.Term, u)
 		}
 	case *AppendEntriesResponse:
+		if m.Term < l.term {
+			return nil
+		}
 		if m.Term > l.term {
-			return l.stepdown(m.Term)
+			return l.stepdown(m.Term, u)
 		}
 		return l.onAppendEntriesResponse(m, u)
 	case *Proposal:
@@ -619,7 +640,7 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 		// oudated server is catching up
 		return nil
 	}
-	// we received an actual update. time to **maybe** commit new entries
+	// we received an actual update. time to check if we can commit new entries
 	indexes := make([]uint64, len(l.configuration.Nodes)-1)
 	i := 0
 	for _, index := range l.matchIndex {
@@ -635,6 +656,8 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 		return nil
 	}
 	l.logger.Debugw("ready to update commit idx", "index", idx)
+	// TODO entries in the log starts at the index 0. but in the state machine first
+	// index always starts at 1.
 	entry, err := l.log.Get(int(idx) - 1)
 	l.must(err, "failed to get entry")
 	if entry.Term != l.term {

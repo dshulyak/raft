@@ -63,6 +63,9 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 		ds, err := NewDurableState(f)
 		require.NoError(t, err)
 		cluster.ds[node.ID] = ds
+		t.Cleanup(func() {
+			ds.Close()
+		})
 
 		log, err := raftlog.New(logger, nil, nil)
 		require.NoError(t, err)
@@ -104,15 +107,13 @@ func (t *testCluster) size() int {
 }
 
 func (t *testCluster) propose(id NodeID, entry *raftlog.LogEntry) *Update {
-	update, err := t.states[id].Next(&Proposal{Entry: entry})
-	require.NoError(t.t, err)
-	return update
+	require.NoError(t.t, t.states[id].Next(&Proposal{Entry: entry}))
+	return t.states[id].Update()
 }
 
 func (t *testCluster) triggerTimeout(id NodeID) *Update {
-	update, err := t.states[id].Tick(t.maxTicks)
-	require.NoError(t.t, err)
-	return update
+	require.NoError(t.t, t.states[id].Tick(t.maxTicks))
+	return t.states[id].Update()
 }
 
 func (c *testCluster) blockRoute(from, to NodeID) {
@@ -140,7 +141,7 @@ func (c *testCluster) isBlocked(from, to NodeID) bool {
 }
 
 func (c *testCluster) run(t TestingHelper, u *Update, from NodeID) *Update {
-	t.Helper()
+	c.t.Helper()
 	stack := []*Update{u}
 	for len(stack) > 0 {
 		u = stack[0]
@@ -155,8 +156,8 @@ func (c *testCluster) run(t TestingHelper, u *Update, from NodeID) *Update {
 			}
 			sm := c.states[msg.To]
 			c.messages = append(c.messages, msg.Message)
-			update, err := sm.Next(msg.Message)
-			require.NoError(t, err)
+			require.NoError(c.t, sm.Next(msg.Message))
+			update := sm.Update()
 			if update != nil {
 				stack = append(stack, update)
 			}
@@ -190,6 +191,7 @@ func (c *testCluster) resetHistory() {
 }
 
 func testReplicationAfterElection(t *testing.T, term uint64) {
+	t.Helper()
 	cluster := getTestCluster(t, 3, 0, 20)
 	var update *Update
 	for i := uint64(0); i < term; i++ {
@@ -439,7 +441,7 @@ func (c *clusterMachine) Init(t *rapid.T) {
 func (c *clusterMachine) Timeout(t *rapid.T) {
 	node := rapid.IntRange(1, c.cluster.size()).Draw(t, "timeout_node").(int)
 	update := c.cluster.run(c.cleanup, c.cluster.triggerTimeout(NodeID(node)), NodeID(node))
-	if update != nil && update.Elected {
+	if update != nil && update.State == RaftLeader {
 		c.state.leader = NodeID(node)
 	}
 }
@@ -474,7 +476,6 @@ func (c *clusterMachine) Propose(t *rapid.T) {
 
 func (c *clusterMachine) Check(t *rapid.T) {
 	if c.state.commit.Term == 0 && c.state.commit.Index == 0 {
-		//t.Skip("nothing was commited yet")
 		return
 	}
 	majority := c.cluster.size()/2 + 1
