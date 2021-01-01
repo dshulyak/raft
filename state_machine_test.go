@@ -404,6 +404,28 @@ func TestRaftProposalReplication(t *testing.T) {
 	require.Equal(t, raftlog.LogApplication, update.Proposals[0].Entry.OpType)
 }
 
+func TestRaftLogClean(t *testing.T) {
+	cluster := getTestCluster(t, 3, 0, 1)
+	update := cluster.run(t, cluster.triggerTimeout(1), 1)
+	require.Len(t, update.Proposals, 1)
+
+	for i := 1; i <= cluster.size(); i++ {
+		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2})
+		require.True(t, cluster.logs[NodeID(i)].IsEmpty())
+	}
+}
+
+func TestRaftLogOverwrite(t *testing.T) {
+	cluster := getTestCluster(t, 3, 0, 1)
+	update := cluster.run(t, cluster.triggerTimeout(1), 1)
+	require.Len(t, update.Proposals, 1)
+
+	for i := 1; i <= cluster.size(); i++ {
+		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2, PrevLog: LogHeader{Index: 1}})
+		require.True(t, cluster.logs[NodeID(i)].IsEmpty())
+	}
+}
+
 type rapidCleanup struct {
 	*rapid.T
 	cleanups []func()

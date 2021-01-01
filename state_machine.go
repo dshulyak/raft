@@ -109,6 +109,7 @@ type Update struct {
 	Msgs      []MessageTo
 	Proposals []*Proposal
 	State     RaftState
+	Term      uint64
 	CommitLog LogHeader
 }
 
@@ -269,6 +270,7 @@ func toFollower(s *state, term uint64, u *Update) *follower {
 	if term > s.term {
 		s.term = term
 		s.votedFor = None
+		s.must(s.Sync(), "failed to sync durable state")
 	}
 	u.State = RaftFollower
 	u.Updated = true
@@ -310,7 +312,9 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	} else if f.term < msg.Term {
 		f.term = msg.Term
 		f.votedFor = None
+		f.must(f.Sync(), "failed to sync durable state")
 	}
+	f.resetTicks()
 	f.logger.Debugw("append entries",
 		"leader", msg.Leader,
 		"count", len(msg.Entries),
@@ -318,8 +322,18 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		"prev log term", msg.PrevLog.Term,
 		"prev log index", msg.PrevLog.Index,
 	)
-	f.resetTicks()
-	if !(f.log.IsEmpty() && msg.PrevLog.Term == 0) {
+	empty := f.log.IsEmpty()
+	if empty && msg.PrevLog.Index > 0 {
+		f.send(u, &AppendEntriesResponse{
+			Term:     f.term,
+			Follower: f.id,
+		}, msg.Leader)
+		return nil
+	}
+	if !empty && msg.PrevLog.Index == 0 {
+		f.logger.Debugw("cleaning local log")
+		f.must(f.log.DeleteFrom(0), "failed to delete a log")
+	} else if !empty {
 		entry, err := f.log.Get(int(msg.PrevLog.Index) - 1)
 		if errors.Is(err, raftlog.ErrEntryNotFound) {
 			f.send(u, &AppendEntriesResponse{
@@ -328,15 +342,20 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			}, msg.Leader)
 			return nil
 		} else if err != nil {
-			f.must(err, "failed log get entry")
+			f.must(err, "failed to get log entry")
 		}
 		if entry.Term != msg.PrevLog.Term {
 			f.logger.Debugw("deleting log file", "at index", msg.PrevLog.Index, "local prev term", entry.Term, "new term", msg.PrevLog.Term)
-			f.must(f.log.DeleteFrom(int(msg.PrevLog.Index)), "failed log deletion")
+			f.must(f.log.DeleteFrom(int(msg.PrevLog.Index)-1), "failed to delete a log")
+			f.send(u, &AppendEntriesResponse{
+				Term:     f.term,
+				Follower: f.id,
+			}, msg.Leader)
+			return nil
 		}
 	}
 	if len(msg.Entries) == 0 {
-		f.logger.Debugw("received heartbeat", "leader", msg.Leader)
+		f.logger.Debugw("received a heartbeat", "leader", msg.Leader)
 		f.send(u, &AppendEntriesResponse{
 			Term:     f.term,
 			Follower: f.id,
@@ -515,6 +534,7 @@ func toLeader(s *state, u *Update) *leader {
 		OpType: raftlog.LogNoop,
 	}})
 	u.State = RaftLeader
+	u.Term = l.term
 	u.Updated = true
 	return &l
 
@@ -656,13 +676,14 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 		return nil
 	}
 	l.logger.Debugw("ready to update commit idx", "index", idx)
-	// TODO entries in the log starts at the index 0. but in the state machine first
-	// index always starts at 1.
+	// FIXME we are storing index starting at 0. but in the state machine
+	// first valid index starts with 1.
 	entry, err := l.log.Get(int(idx) - 1)
 	l.must(err, "failed to get entry")
 	if entry.Term != l.term {
 		return nil
 	}
+	l.must(l.log.Sync(), "failed to sync the log")
 	l.commit(u, idx)
 	l.commitInflight(u, idx)
 	return nil
