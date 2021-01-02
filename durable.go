@@ -1,17 +1,30 @@
 package raft
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 
 	"github.com/tysonmote/gommap"
 )
 
+var (
+	ErrStateCorrupted = errors.New("durable state is corrupted")
+)
+
 const (
+	crcWidth      = 4
 	termWidth     = 8
 	votedForWidth = 8
-	stateWidth    = termWidth + votedForWidth
+	stateWidth    = crcWidth + termWidth + votedForWidth
+)
+
+var (
+	table = crc32.MakeTable(crc32.Castagnoli)
+	empty = [stateWidth]byte{}
 )
 
 func NewDurableState(f *os.File) (*DurableState, error) {
@@ -40,15 +53,27 @@ type DurableState struct {
 
 func (ds *DurableState) Sync() error {
 	buf := ds.buf[:]
-	binary.LittleEndian.PutUint64(buf[:termWidth], ds.term)
-	binary.LittleEndian.PutUint64(buf[termWidth:stateWidth], uint64(ds.votedFor))
+	binary.LittleEndian.PutUint64(buf[crcWidth:], ds.term)
+	binary.LittleEndian.PutUint64(buf[crcWidth+termWidth:], uint64(ds.votedFor))
+	code := crc32.Update(0, table, buf[crcWidth:])
+	binary.LittleEndian.PutUint32(buf, code)
 	_ = copy(ds.mmap, buf)
 	return ds.mmap.Sync(gommap.MS_SYNC)
 }
 
 func (ds *DurableState) Load() error {
-	ds.term = binary.LittleEndian.Uint64(ds.mmap[:termWidth])
-	ds.votedFor = NodeID(binary.LittleEndian.Uint64(ds.mmap[termWidth:stateWidth]))
+	buf := ds.buf[:]
+	copy(buf, ds.mmap)
+	if bytes.Compare(buf, empty[:]) == 0 {
+		return nil
+	}
+
+	code := binary.LittleEndian.Uint32(buf)
+	if code != crc32.Update(0, table, buf[crcWidth:]) {
+		return ErrStateCorrupted
+	}
+	ds.term = binary.LittleEndian.Uint64(buf[crcWidth:])
+	ds.votedFor = NodeID(binary.LittleEndian.Uint64(buf[crcWidth+termWidth:]))
 	return nil
 }
 
