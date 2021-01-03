@@ -102,6 +102,29 @@ func (t *testCluster) restart(id NodeID) {
 	}, t.logs[id], t.ds[id])
 }
 
+func (t *testCluster) runReplication(peer *peerState, to NodeID, next *AppendEntries) {
+	peer.init(next)
+	sm := t.states[to]
+	for next != nil {
+		t.messages = append(t.messages, next)
+		require.NoError(t.t, sm.Next(next))
+		update := sm.Update()
+		require.NotNil(t.t, update)
+		require.Len(t.t, update.Msgs, 1)
+
+		msg, ok := update.Msgs[0].Message.(*AppendEntriesResponse)
+		require.True(t.t, ok, "not an AppendEntriesResponse")
+		t.messages = append(t.messages, msg)
+		peer.handleResponse(msg)
+
+		next = peer.next()
+	}
+}
+
+func (t *testCluster) replicationPeer(id NodeID, maxEntries uint64, timeout int) *peerState {
+	return newPeerState(t.logger.Sugar(), maxEntries, timeout, t.logs[id])
+}
+
 func (t *testCluster) size() int {
 	return len(t.states)
 }
@@ -176,14 +199,14 @@ func (c *testCluster) iterateLogs(f func(*raftlog.Storage) bool) {
 
 func (c *testCluster) compareMsgHistories(t TestingHelper, expected []interface{}) {
 	t.Helper()
-	max := len(c.messages)
-	for i := range expected {
-		if i > max {
-			break
+	max := len(expected)
+	for i := range c.messages {
+		if i >= max {
+			assert.Equal(t, nil, c.messages[i], "message %d", i)
+			continue
 		}
-		assert.Equal(t, expected[i], c.messages[i])
+		assert.Equal(t, expected[i], c.messages[i], "message %d", i)
 	}
-	assert.Len(t, expected, max)
 }
 
 func (c *testCluster) resetHistory() {

@@ -109,7 +109,6 @@ type Update struct {
 	Msgs      []MessageTo
 	Proposals []*Proposal
 	State     RaftState
-	Term      uint64
 	CommitLog LogHeader
 }
 
@@ -345,7 +344,11 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			f.must(err, "failed to get log entry")
 		}
 		if entry.Term != msg.PrevLog.Term {
-			f.logger.Debugw("deleting log file", "at index", msg.PrevLog.Index, "local prev term", entry.Term, "new term", msg.PrevLog.Term)
+			f.logger.Debugw("deleting log file",
+				"at index", msg.PrevLog.Index,
+				"local prev term", entry.Term,
+				"new term", msg.PrevLog.Term,
+			)
 			f.must(f.log.DeleteFrom(int(msg.PrevLog.Index)-1), "failed to delete a log")
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.term,
@@ -369,7 +372,10 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		last = msg.Entries[i]
 		f.must(f.log.Append(last), "failed to append log")
 	}
-	f.logger.Debugw("last appended entry", "index", last.Index, "term", last.Term)
+	f.logger.Debugw("last appended entry",
+		"index", last.Index,
+		"term", last.Term,
+	)
 	// TODO as an optimization we don't need to fsync in state machine
 	// we only need to fsync before replying to the leader or before sending
 	// logs to the Application
@@ -534,7 +540,6 @@ func toLeader(s *state, u *Update) *leader {
 		OpType: raftlog.LogNoop,
 	}})
 	u.State = RaftLeader
-	u.Term = l.term
 	u.Updated = true
 	return &l
 

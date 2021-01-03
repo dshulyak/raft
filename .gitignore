@@ -1,2 +1,4 @@
 *.html
 *.fail
+*.test
+*.out
