@@ -26,6 +26,8 @@ type LogHeader struct {
 	Term, Index uint64
 }
 
+type Message interface{}
+
 type RequestVote struct {
 	Term      uint64
 	Candidate NodeID

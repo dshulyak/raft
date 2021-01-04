@@ -9,9 +9,9 @@ import (
 
 func newPeerState(
 	logger *zap.SugaredLogger,
-	maxEntries uint64, heartbeatTimeout int,
-	log *raftlog.Storage,
-) *peerState {
+	maxEntries uint64,
+	heartbeatTimeout int,
+	log *raftlog.Storage) *peerState {
 	peer := &peerState{
 		logger:           logger,
 		maxEntries:       maxEntries,
@@ -132,9 +132,9 @@ func (p *peerState) next() *AppendEntries {
 	}
 }
 
-// handleResponse process AppendEntriesResponse's from the peer and adjusts
+// onResponse receives AppendEntriesResponse's from the peer and adjusts
 // leader view of the replica in order for AppendEntries RPC to succeed eventually.
-func (p *peerState) handleResponse(m *AppendEntriesResponse) {
+func (p *peerState) onResponse(m *AppendEntriesResponse) {
 	if m.Term != p.term {
 		return
 	}
