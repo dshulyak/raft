@@ -14,6 +14,7 @@ type Context struct {
 	entriesPerAppend int
 	storage          *raftlog.Storage
 	logger           *zap.SugaredLogger
+	dialTimeout      time.Duration
 	backoff          time.Duration
 	tickInterval     time.Duration
 	heartbeatTimeout int
@@ -50,4 +51,8 @@ func (c *Context) HeartbeatTimeout() int {
 
 func (c *Context) ElectionTimeout() int {
 	return c.electionTimeout
+}
+
+func (c *Context) DialTimeout() time.Duration {
+	return c.dialTimeout
 }

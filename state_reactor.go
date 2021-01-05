@@ -9,8 +9,6 @@ import (
 	"github.com/dshulyak/raftlog"
 )
 
-const maxProposals = 128
-
 var (
 	ErrProposalsOverflow = errors.New("proposals queue overflow")
 	ErrStopped           = errors.New("node is stopped")
@@ -37,7 +35,7 @@ func (b bufferedProposals) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case proposal := <-b.in:
-			if len(batch) == maxProposals {
+			if len(batch) == b.max {
 				proposal.Complete(ErrProposalsOverflow)
 			}
 			batch = append(batch, proposal)
@@ -53,15 +51,15 @@ type appUpdate struct {
 }
 
 type stateReactor struct {
-	ctx    context.Context
-	cancel func()
-	tick   time.Duration
+	ctx          context.Context
+	cancel       func()
+	tick         time.Duration
+	maxProposals int
 
 	raft *StateMachine
 
 	outMu      sync.Mutex
 	bufferMode RaftState
-	outbound   map[NodeID]egressBuffer
 
 	inbound     chan Message
 	proposals   chan *Proposal
@@ -87,6 +85,17 @@ func (s *stateReactor) Propose(ctx context.Context, data []byte) (*Proposal, err
 	}
 }
 
+func (s *stateReactor) Push(ctx context.Context, msg Message) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.inbound <- msg:
+		return nil
+	case <-s.ctx.Done():
+		return ErrStopped
+	}
+}
+
 func (s *stateReactor) run() (err error) {
 	var (
 		proposals = make(chan []*Proposal, 1)
@@ -98,7 +107,7 @@ func (s *stateReactor) run() (err error) {
 	go bufferedProposals{
 		out: proposals,
 		in:  s.proposals,
-		max: maxProposals,
+		max: s.maxProposals,
 	}.run(s.ctx)
 
 	for {

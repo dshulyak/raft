@@ -18,3 +18,21 @@ func (n *Node) String() string {
 type Configuration struct {
 	Nodes []Node
 }
+
+type ConfChangeType uint8
+
+func (c ConfChangeType) String() string {
+	return confChangeString[c]
+}
+
+const (
+	ConfAdd = iota + 1
+	ConfDelete
+)
+
+var confChangeString = [...]string{"Empty", "Add", "Delete"}
+
+type ConfChange struct {
+	Type ConfChangeType
+	Node Node
+}

@@ -115,7 +115,7 @@ func (t *testCluster) runReplication(peer *peerState, to NodeID, next *AppendEnt
 		msg, ok := update.Msgs[0].Message.(*AppendEntriesResponse)
 		require.True(t.t, ok, "not an AppendEntriesResponse")
 		t.messages = append(t.messages, msg)
-		peer.handleResponse(msg)
+		peer.onResponse(msg)
 
 		next = peer.next()
 	}
