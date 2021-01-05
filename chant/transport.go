@@ -185,19 +185,21 @@ func (c *Connection) run() {
 
 func deliver(ctx context.Context, r, w chan raft.Message) {
 	var (
-		msg raft.Message
-		out chan raft.Message
+		msg     raft.Message
+		out, in chan raft.Message
 	)
 	for {
 		if msg != nil {
 			out = r
+			in = nil
 		} else {
 			out = nil
+			in = w
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case msg = <-w:
+		case msg = <-in:
 		case out <- msg:
 			msg = nil
 		}

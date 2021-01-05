@@ -59,3 +59,33 @@ func TestMsgStream(t *testing.T) {
 		}
 	}
 }
+
+func TestMsgReverse(t *testing.T) {
+	net := New()
+	t.Cleanup(func() {
+		net.Close()
+	})
+	first := net.Transport(1)
+	second := net.Transport(2)
+
+	n := 3333
+	second.HandleStream(func(stream raft.MsgStream) {
+		go func() {
+			for i := 0; i < n; i++ {
+				if err := stream.Send(context.TODO(), i); err == io.EOF {
+					return
+				}
+			}
+		}()
+	})
+
+	stream, err := first.Dial(context.TODO(), &raft.Node{ID: 2})
+	require.NoError(t, err)
+	for i := 0; i < n; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		msg, err := stream.Receive(ctx)
+		cancel()
+		require.NoError(t, err)
+		require.Equal(t, i, msg)
+	}
+}
