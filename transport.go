@@ -9,7 +9,7 @@ import (
 
 type Transport interface {
 	Dial(context.Context, *Node) (MsgStream, error)
-	HandleMsgStream(func(MsgStream))
+	HandleStream(func(MsgStream))
 	Close() error
 }
 
