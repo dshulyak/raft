@@ -2,6 +2,8 @@ package raft
 
 import (
 	"context"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -30,8 +32,14 @@ func TestServerConnect(t *testing.T) {
 		Logger:    testLogger(t),
 		Transport: tr2,
 	}
-	srv2 := newServer(ctx2, func(_ context.Context, stream MsgStream) error {
+	errc := make(chan error)
+	srv2 := newServer(ctx2, func(ctx context.Context, stream MsgStream) error {
 		connected2 <- stream.ID()
+		_, err := stream.Receive(ctx)
+		if err != nil {
+			errc <- err
+
+		}
 		return nil
 	})
 	defer srv2.Close()
@@ -49,5 +57,11 @@ func TestServerConnect(t *testing.T) {
 	case <-time.After(time.Millisecond):
 		require.FailNow(t, "timed out waiting for connection")
 	}
-
+	srv1.Disconnect(2)
+	select {
+	case err := <-errc:
+		require.True(t, errors.Is(err, io.EOF), "error %v", err)
+	case <-time.After(time.Millisecond):
+		require.FailNow(t, "timed out waiting for disconnect")
+	}
 }
