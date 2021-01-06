@@ -2,16 +2,44 @@ package raft
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
+var ErrConnected = errors.New("already connected")
+
 type streamHandler struct {
-	state *stateReactor
+	logger *zap.SugaredLogger
+	push   func(context.Context, Message) error
 
 	readTimeout, writeTimeout time.Duration
-	mu                        sync.Mutex
-	sender                    map[NodeID]chan Message
+
+	mu     sync.Mutex
+	sender map[NodeID]chan Message
+	// in current protocol there is no need for more than 1 stream
+	// if two peers will concurrently initiate connections we will end up with more
+	// if connection already exists in this map abandon it.
+	connected map[NodeID]struct{}
+}
+
+func (p *streamHandler) registerConnection(id NodeID) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, exist := p.connected[id]
+	if exist {
+		return false
+	}
+	p.connected[id] = struct{}{}
+	return true
+}
+
+func (p *streamHandler) unregisterConnection(id NodeID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.connected, id)
 }
 
 func (p *streamHandler) reader(parent context.Context, stream MsgStream) error {
@@ -22,7 +50,7 @@ func (p *streamHandler) reader(parent context.Context, stream MsgStream) error {
 		if err != nil {
 			return err
 		}
-		if err := p.state.Push(parent, msg); err != nil {
+		if err := p.push(parent, msg); err != nil {
 			return err
 		}
 	}
@@ -53,6 +81,10 @@ func (p *streamHandler) writer(parent context.Context, stream MsgStream) error {
 }
 
 func (p *streamHandler) handle(ctx context.Context, stream MsgStream) error {
+	if !p.registerConnection(stream.ID()) {
+		return ErrConnected
+	}
+	defer p.unregisterConnection(stream.ID())
 	var (
 		wg   sync.WaitGroup
 		errc = make(chan error, 2)

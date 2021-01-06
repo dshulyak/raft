@@ -182,9 +182,9 @@ type StateMachineConfig struct {
 	MinTicks, MaxTicks int
 }
 
-func NewStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog.Storage, ds *DurableState) *StateMachine {
+func newStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog.Storage, ds *DurableState) *stateMachine {
 	update := &Update{}
-	return &StateMachine{
+	return &stateMachine{
 		update: update,
 		role: toFollower(&state{
 			DurableState:  ds,
@@ -198,12 +198,12 @@ func NewStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog
 	}
 }
 
-type StateMachine struct {
+type stateMachine struct {
 	role   role
 	update *Update
 }
 
-func (s *StateMachine) Tick(n int) (err error) {
+func (s *stateMachine) Tick(n int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
@@ -216,7 +216,7 @@ func (s *StateMachine) Tick(n int) (err error) {
 	return
 }
 
-func (s *StateMachine) Next(msg interface{}) (err error) {
+func (s *stateMachine) Next(msg interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
@@ -233,7 +233,7 @@ func (s *StateMachine) Next(msg interface{}) (err error) {
 	return
 }
 
-func (s *StateMachine) Update() *Update {
+func (s *stateMachine) Update() *Update {
 	if !s.update.Updated {
 		return nil
 	}

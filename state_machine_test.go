@@ -49,7 +49,7 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 		configuration: configuration,
 		logs:          map[NodeID]*raftlog.Storage{},
 		ds:            map[NodeID]*DurableState{},
-		states:        map[NodeID]*StateMachine{},
+		states:        map[NodeID]*stateMachine{},
 		blockedRoutes: map[NodeID]map[NodeID]struct{}{},
 	}
 	for _, node := range configuration.Nodes {
@@ -88,13 +88,13 @@ type testCluster struct {
 	logs map[NodeID]*raftlog.Storage
 	ds   map[NodeID]*DurableState
 
-	states        map[NodeID]*StateMachine
+	states        map[NodeID]*stateMachine
 	messages      []interface{}
 	blockedRoutes map[NodeID]map[NodeID]struct{}
 }
 
 func (t *testCluster) restart(id NodeID) {
-	t.states[id] = NewStateMachine(t.logger, StateMachineConfig{
+	t.states[id] = newStateMachine(t.logger, StateMachineConfig{
 		ID:            id,
 		MinTicks:      t.minTicks,
 		MaxTicks:      t.maxTicks,

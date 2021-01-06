@@ -3,7 +3,6 @@ package raft
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/dshulyak/raftlog"
@@ -50,23 +49,23 @@ type appUpdate struct {
 	Proposals []*Proposal
 }
 
-type stateReactor struct {
+type node struct {
+	global       *Context
 	ctx          context.Context
 	cancel       func()
 	tick         time.Duration
 	maxProposals int
 
-	raft *StateMachine
-
-	outMu      sync.Mutex
-	bufferMode RaftState
+	raft    *stateMachine
+	streams *streamHandler
+	server  *server
 
 	inbound     chan Message
 	proposals   chan *Proposal
-	application chan appUpdate
+	application chan *appUpdate
 }
 
-func (s *stateReactor) Propose(ctx context.Context, data []byte) (*Proposal, error) {
+func (s *node) Propose(ctx context.Context, data []byte) (*Proposal, error) {
 	proposal := &Proposal{
 		ctx:    s.ctx,
 		result: make(chan error, 1),
@@ -85,7 +84,7 @@ func (s *stateReactor) Propose(ctx context.Context, data []byte) (*Proposal, err
 	}
 }
 
-func (s *stateReactor) Push(ctx context.Context, msg Message) error {
+func (s *node) Push(ctx context.Context, msg Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -96,12 +95,12 @@ func (s *stateReactor) Push(ctx context.Context, msg Message) error {
 	}
 }
 
-func (s *stateReactor) run() (err error) {
+func (s *node) run() (err error) {
 	var (
 		proposals = make(chan []*Proposal, 1)
 		timeout   = make(chan int)
 		app       *appUpdate
-		appC      chan appUpdate
+		appC      chan *appUpdate
 	)
 	runTicker(s.ctx, timeout, s.tick)
 	go bufferedProposals{
@@ -144,7 +143,7 @@ func (s *stateReactor) run() (err error) {
 			err = s.raft.Next(msg)
 		case n := <-timeout:
 			err = s.raft.Tick(n)
-		case appC <- *app:
+		case appC <- app:
 			app = nil
 		}
 	}
