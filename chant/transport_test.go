@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/raft"
+	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +20,7 @@ func TestHostDown(t *testing.T) {
 	})
 	first := net.Transport(1)
 
-	stream, err := first.Dial(context.TODO(), &raft.Node{ID: 2})
+	stream, err := first.Dial(context.TODO(), &types.Node{ID: 2})
 	assert.Nil(t, stream)
 	assert.Error(t, err, error(syscall.EHOSTDOWN).Error())
 }
@@ -32,8 +32,8 @@ func TestMsgStream(t *testing.T) {
 	})
 	first := net.Transport(1)
 	second := net.Transport(2)
-	received := make(chan raft.Message, 1)
-	second.HandleStream(func(stream raft.MsgStream) {
+	received := make(chan types.Message, 1)
+	second.HandleStream(func(stream types.MsgStream) {
 		go func() {
 			for {
 				msg, err := stream.Receive(context.TODO())
@@ -45,7 +45,7 @@ func TestMsgStream(t *testing.T) {
 		}()
 	})
 
-	stream, err := first.Dial(context.TODO(), &raft.Node{ID: 2})
+	stream, err := first.Dial(context.TODO(), &types.Node{ID: 2})
 	require.NoError(t, err)
 
 	n := 3333
@@ -69,7 +69,7 @@ func TestMsgReverse(t *testing.T) {
 	second := net.Transport(2)
 
 	n := 3333
-	second.HandleStream(func(stream raft.MsgStream) {
+	second.HandleStream(func(stream types.MsgStream) {
 		go func() {
 			for i := 0; i < n; i++ {
 				if err := stream.Send(context.TODO(), i); err == io.EOF {
@@ -79,7 +79,7 @@ func TestMsgReverse(t *testing.T) {
 		}()
 	})
 
-	stream, err := first.Dial(context.TODO(), &raft.Node{ID: 2})
+	stream, err := first.Dial(context.TODO(), &types.Node{ID: 2})
 	require.NoError(t, err)
 	for i := 0; i < n; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

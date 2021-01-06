@@ -6,7 +6,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/dshulyak/raft"
+	"github.com/dshulyak/raft/types"
 )
 
 func New() *Network {
@@ -14,7 +14,7 @@ func New() *Network {
 	return &Network{
 		ctx:        ctx,
 		cancel:     cancel,
-		transports: map[raft.NodeID]*Transport{},
+		transports: map[types.NodeID]*Transport{},
 	}
 }
 
@@ -22,10 +22,10 @@ type Network struct {
 	ctx        context.Context
 	cancel     func()
 	mu         sync.Mutex
-	transports map[raft.NodeID]*Transport
+	transports map[types.NodeID]*Transport
 }
 
-func (n *Network) Transport(id raft.NodeID) *Transport {
+func (n *Network) Transport(id types.NodeID) *Transport {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	tr, exist := n.transports[id]
@@ -36,14 +36,14 @@ func (n *Network) Transport(id raft.NodeID) *Transport {
 			ctx:         ctx,
 			cancel:      cancel,
 			id:          id,
-			connections: map[raft.NodeID]*Connection{},
+			connections: map[types.NodeID]*Connection{},
 		}
 		n.transports[id] = tr
 	}
 	return tr
 }
 
-func (n *Network) Accept(to raft.NodeID, stream *Stream) error {
+func (n *Network) Accept(to types.NodeID, stream *Stream) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	tr, exist := n.transports[to]
@@ -59,21 +59,21 @@ func (n *Network) Close() {
 	n.cancel()
 }
 
-var _ raft.Transport = (*Transport)(nil)
+var _ types.Transport = (*Transport)(nil)
 
 type Transport struct {
 	network *Network
 	ctx     context.Context
 	cancel  func()
-	id      raft.NodeID
+	id      types.NodeID
 
-	handler func(raft.MsgStream)
+	handler func(types.MsgStream)
 
 	mu          sync.Mutex
-	connections map[raft.NodeID]*Connection
+	connections map[types.NodeID]*Connection
 }
 
-func (t *Transport) Dial(ctx context.Context, n *raft.Node) (raft.MsgStream, error) {
+func (t *Transport) Dial(ctx context.Context, n *types.Node) (types.MsgStream, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if n.ID == t.id {
@@ -88,13 +88,13 @@ func (t *Transport) Dial(ctx context.Context, n *raft.Node) (raft.MsgStream, err
 
 			p1: t.id,
 			p2: n.ID,
-			r1: make(chan raft.Message),
-			r2: make(chan raft.Message),
-			w1: make(chan raft.Message),
-			w2: make(chan raft.Message),
+			r1: make(chan types.Message),
+			r2: make(chan types.Message),
+			w1: make(chan types.Message),
+			w2: make(chan types.Message),
 		}
 		t.connections[n.ID] = conn
-		go func(id raft.NodeID) {
+		go func(id types.NodeID) {
 			conn.run()
 			t.mu.Lock()
 			delete(t.connections, id)
@@ -110,7 +110,7 @@ func (t *Transport) Dial(ctx context.Context, n *raft.Node) (raft.MsgStream, err
 	return s1, nil
 }
 
-func (t *Transport) Accept(stream raft.MsgStream) error {
+func (t *Transport) Accept(stream types.MsgStream) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.handler == nil {
@@ -120,7 +120,7 @@ func (t *Transport) Accept(stream raft.MsgStream) error {
 	return nil
 }
 
-func (t *Transport) RemoveConnection(id raft.NodeID) {
+func (t *Transport) RemoveConnection(id types.NodeID) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.connections, id)
@@ -133,7 +133,7 @@ func (t *Transport) Close() error {
 	return nil
 }
 
-func (t *Transport) HandleStream(handler func(raft.MsgStream)) {
+func (t *Transport) HandleStream(handler func(types.MsgStream)) {
 	t.handler = handler
 }
 
@@ -142,10 +142,10 @@ func (t *Transport) HandleStream(handler func(raft.MsgStream)) {
 // after message is accepted into internal OS buffer, for simplicity
 // internal buffer always is a single item
 type Connection struct {
-	p1, p2         raft.NodeID
+	p1, p2         types.NodeID
 	ctx            context.Context
 	cancel         func()
-	r1, w1, r2, w2 chan raft.Message
+	r1, w1, r2, w2 chan types.Message
 }
 
 func (c *Connection) Pair() (s1, s2 *Stream) {
@@ -183,10 +183,10 @@ func (c *Connection) run() {
 
 }
 
-func deliver(ctx context.Context, r, w chan raft.Message) {
+func deliver(ctx context.Context, r, w chan types.Message) {
 	var (
-		msg     raft.Message
-		out, in chan raft.Message
+		msg     types.Message
+		out, in chan types.Message
 	)
 	for {
 		if msg != nil {
@@ -206,19 +206,19 @@ func deliver(ctx context.Context, r, w chan raft.Message) {
 	}
 }
 
-var _ raft.MsgStream = (*Stream)(nil)
+var _ types.MsgStream = (*Stream)(nil)
 
 type Stream struct {
 	conn *Connection
-	id   raft.NodeID
-	r, w chan raft.Message
+	id   types.NodeID
+	r, w chan types.Message
 }
 
-func (s *Stream) ID() raft.NodeID {
+func (s *Stream) ID() types.NodeID {
 	return s.id
 }
 
-func (s *Stream) Send(ctx context.Context, msg raft.Message) error {
+func (s *Stream) Send(ctx context.Context, msg types.Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -229,7 +229,7 @@ func (s *Stream) Send(ctx context.Context, msg raft.Message) error {
 	}
 }
 
-func (s *Stream) Receive(ctx context.Context) (raft.Message, error) {
+func (s *Stream) Receive(ctx context.Context) (types.Message, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
