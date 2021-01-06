@@ -6,6 +6,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -14,7 +16,27 @@ var (
 
 type handler func(context.Context, MsgStream) error
 
+func newServer(global *Context, protocol handler) *server {
+	ctx, cancel := context.WithCancel(global)
+	srv := &server{
+		logger:      global.Logger.Sugar(),
+		ctx:         ctx,
+		cancel:      cancel,
+		tr:          global.Transport,
+		backoff:     global.Backoff,
+		dialTimeout: global.DialTimeout,
+		protocol:    protocol,
+		connectors:  map[NodeID]*connector{},
+		connected:   map[NodeID]struct{}{},
+	}
+	global.Transport.HandleStream(func(stream MsgStream) {
+		srv.accept(stream.ID(), stream)
+	})
+	return srv
+}
+
 type server struct {
+	logger *zap.SugaredLogger
 	ctx    context.Context
 	cancel func()
 	tr     Transport
@@ -23,17 +45,47 @@ type server struct {
 	dialTimeout time.Duration
 	protocol    handler
 
-	mu      sync.Mutex
-	dialers map[NodeID]*dialer
+	mu         sync.RWMutex
+	connectors map[NodeID]*connector
+	connected  map[NodeID]struct{}
 }
 
-func (s *server) dial(node *Node) {
+// setConnected marks node id as connected if it wasn't connected.
+func (s *server) setConnected(id NodeID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, exist := s.dialers[node.ID]
+	_, exist := s.connected[id]
+	if exist {
+		return false
+	}
+	s.connected[id] = struct{}{}
+	return true
+}
+
+func (s *server) removeConnected(id NodeID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.connected, id)
+}
+
+func (s *server) getConnector(id NodeID) *connector {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.connectors[id]
+}
+
+// Connect will ensure that there is one opened stream at every point of time.
+// If node is not reachable it will be dialed in the background, according to the backoff
+// policy.
+// In case if two nodes will connect to each it is the protocol responsibility to
+// close redundant streams or make use of them.
+func (s *server) Connect(node *Node) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, exist := s.connectors[node.ID]
 	if !exist {
 		ctx, cancel := context.WithCancel(s.ctx)
-		d := &dialer{
+		d := &connector{
 			ctx:         ctx,
 			cancel:      cancel,
 			dialTimeout: s.dialTimeout,
@@ -41,52 +93,85 @@ func (s *server) dial(node *Node) {
 			tr:          s.tr,
 			node:        node,
 		}
-		s.dialers[node.ID] = d
-		go func() {
-			for {
-				stream, err := d.dialWithBackoff()
-				if err == nil {
-					err = s.protocol(s.ctx, stream)
-				}
-				if !errors.Is(err, io.EOF) {
-					stream.Close()
-				}
-				if errors.Is(err, context.Canceled) {
-					return
-				}
-			}
-		}()
+		s.connectors[node.ID] = d
+		_, exist := s.connected[node.ID]
+		// if stream is not opened spawn a connector goroutine
+		// otherwise when an already accepted stream will be closing
+		// it will check that the connector exist
+		if !exist {
+			s.accept(node.ID, nil)
+		}
 	}
 }
 
-func (s *server) accept(stream MsgStream) {
+func (s *server) Disconnect(id NodeID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, exist := s.connectors[id]
+	if !exist {
+		return
+	}
+	delete(s.connectors, id)
+	c.close()
+}
+
+func (s *server) accept(id NodeID, stream MsgStream) {
 	go func() {
-		// i need a way to notify dialer that the connection is restored
-		// if dialer is in the deep backoff
-		// if connection is restored handoff this stream to the dialer
-		// and let him manage connections as it was previously
-		err := s.protocol(s.ctx, stream)
-		if errors.Is(err, io.EOF) {
-			stream.Close()
+		var (
+			connected bool
+			conn      *connector
+			err       error
+		)
+		for {
+			if conn != nil {
+				stream, err = conn.dialWithBackoff()
+			}
+			if err == nil && stream != nil {
+				err = s.protocol(s.ctx, stream)
+			}
+			if stream != nil && !errors.Is(err, io.EOF) {
+				stream.Close()
+			}
+			if stream != nil {
+				s.removeConnected(id)
+				stream = nil
+			}
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			connected = s.setConnected(id)
+			if !connected {
+				return
+			}
+			c1 := s.getConnector(id)
+			if c1 == nil {
+				return
+			}
+			if conn == nil {
+				// need to reset the backoff if peer dialed to us
+				// while this node connector might be in the deep backoff
+				c1.resetBackoff()
+			}
+			conn = c1
 		}
 	}()
 }
 
-func (s *server) closeDialers() {
+func (s *server) closeConnectors() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for id, d := range s.dialers {
-		delete(s.dialers, id)
+	for id, d := range s.connectors {
+		delete(s.connectors, id)
 		d.close()
 	}
 }
 
-func (s *server) close() {
+func (s *server) Close() {
 	s.cancel()
-	s.closeDialers()
+	s.closeConnectors()
 }
 
-type dialer struct {
+type connector struct {
 	ctx    context.Context
 	cancel func()
 
@@ -98,14 +183,22 @@ type dialer struct {
 	backoffCount int
 }
 
-func (d *dialer) dial() (MsgStream, error) {
-	ctx, cancel := context.WithTimeout(d.ctx, d.dialTimeout)
-	defer cancel()
+func (d *connector) dial() (MsgStream, error) {
+	ctx := d.ctx
+	if d.dialTimeout > 0 {
+		var cancel func()
+		ctx, cancel = context.WithTimeout(d.ctx, d.dialTimeout)
+		defer cancel()
+	}
 	return d.tr.Dial(ctx, d.node)
 }
 
-func (d *dialer) dialWithBackoff() (MsgStream, error) {
-	if d.backoffCount > 0 {
+func (d *connector) resetBackoff() {
+	d.backoff = 0
+}
+
+func (d *connector) dialWithBackoff() (MsgStream, error) {
+	if d.backoffCount > 0 && d.backoff > 0 {
 		timer := time.NewTimer(d.backoff << (d.backoffCount - 1))
 		defer timer.Stop()
 		select {
@@ -123,6 +216,6 @@ func (d *dialer) dialWithBackoff() (MsgStream, error) {
 	return stream, err
 }
 
-func (d *dialer) close() {
+func (d *connector) close() {
 	d.cancel()
 }

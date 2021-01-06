@@ -10,49 +10,13 @@ import (
 
 type Context struct {
 	context.Context
-	transport        Transport
-	entriesPerAppend int
-	storage          *raftlog.Storage
-	logger           *zap.SugaredLogger
-	dialTimeout      time.Duration
-	backoff          time.Duration
-	tickInterval     time.Duration
-	heartbeatTimeout int
-	electionTimeout  int
-}
-
-func (c *Context) Transport() Transport {
-	return c.transport
-}
-
-func (c *Context) Storage() *raftlog.Storage {
-	return c.storage
-}
-
-func (c *Context) EntriesPerAppend() int {
-	return c.entriesPerAppend
-}
-
-func (c *Context) Logger() *zap.SugaredLogger {
-	return c.logger
-}
-
-func (c *Context) Backoff() time.Duration {
-	return c.backoff
-}
-
-func (c *Context) TickInterval() time.Duration {
-	return c.tickInterval
-}
-
-func (c *Context) HeartbeatTimeout() int {
-	return c.heartbeatTimeout
-}
-
-func (c *Context) ElectionTimeout() int {
-	return c.electionTimeout
-}
-
-func (c *Context) DialTimeout() time.Duration {
-	return c.dialTimeout
+	Transport        Transport
+	EntriesPerAppend int
+	Storage          *raftlog.Storage
+	Logger           *zap.Logger
+	DialTimeout      time.Duration
+	Backoff          time.Duration
+	TickInterval     time.Duration
+	HeartbeatTimeout int
+	ElectionTimeout  int
 }

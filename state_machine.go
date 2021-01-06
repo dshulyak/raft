@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
 	"go.uber.org/zap"
 )
@@ -18,42 +19,17 @@ var (
 	ErrUnexpected     = errors.New("unexpected error")
 )
 
-type NodeID uint64
-
 var None NodeID
 
-type LogHeader struct {
-	Term, Index uint64
-}
-
-type Message interface{}
-
-type RequestVote struct {
-	Term      uint64
-	Candidate NodeID
-	LastLog   LogHeader
-}
-
-type RequestVoteResponse struct {
-	Term        uint64
-	Voter       NodeID
-	VoteGranted bool
-}
-
-type AppendEntries struct {
-	Term     uint64
-	Leader   NodeID
-	PrevLog  LogHeader
-	Commited uint64
-	Entries  []*raftlog.LogEntry
-}
-
-type AppendEntriesResponse struct {
-	Term     uint64
-	Follower NodeID
-	Success  bool
-	LastLog  LogHeader
-}
+type (
+	NodeID                = types.NodeID
+	LogHeader             = types.LogHeader
+	Message               = types.Message
+	RequestVote           = types.RequestVote
+	RequestVoteResponse   = types.RequestVoteResponse
+	AppendEntries         = types.AppendEntries
+	AppendEntriesResponse = types.AppendEntriesResponse
+)
 
 type Proposal struct {
 	ctx    context.Context

@@ -12,13 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest"
 	"pgregory.net/rapid"
 )
 
 type TestingHelper interface {
 	Helper()
 	Cleanup(func())
-	require.TestingT
+	zaptest.TestingT
 }
 
 var logLevel = flag.String("log-level", "panic", "test environment log level")
@@ -27,8 +28,7 @@ func testLogger(t TestingHelper) *zap.Logger {
 	t.Helper()
 	var level zapcore.Level
 	require.NoError(t, level.Set(*logLevel))
-	log, _ := zap.NewDevelopment(zap.IncreaseLevel(level))
-	return log
+	return zaptest.NewLogger(t, zaptest.Level(level))
 }
 
 func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
@@ -456,6 +456,14 @@ type rapidCleanup struct {
 
 func (c *rapidCleanup) Cleanup(f func()) {
 	c.cleanups = append(c.cleanups, f)
+}
+
+func (c *rapidCleanup) Skipped() bool {
+	return false
+}
+
+func (c *rapidCleanup) TempDir() string {
+	return ""
 }
 
 func (c *rapidCleanup) Run() {
