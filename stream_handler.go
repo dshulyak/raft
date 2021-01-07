@@ -4,18 +4,26 @@ import (
 	"errors"
 	"io"
 	"sync"
-	"time"
 
 	"go.uber.org/zap"
 )
 
 var ErrConnected = errors.New("already connected")
 
+type msgPipeline func(Message) error
+
+func newStreamHandler(logger *zap.Logger, push msgPipeline) *streamHandler {
+	return &streamHandler{
+		logger:    logger.Sugar(),
+		push:      push,
+		sender:    map[NodeID]chan Message{},
+		connected: map[NodeID]struct{}{},
+	}
+}
+
 type streamHandler struct {
 	logger *zap.SugaredLogger
-	push   func(Message) error
-
-	readTimeout, writeTimeout time.Duration
+	push   msgPipeline
 
 	mu     sync.Mutex
 	sender map[NodeID]chan Message
@@ -73,6 +81,14 @@ func (p *streamHandler) closeSender(id NodeID) {
 		return
 	}
 	close(sender)
+}
+
+func (p *streamHandler) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, sender := range p.sender {
+		close(sender)
+	}
 }
 
 func (p *streamHandler) writer(stream MsgStream) error {

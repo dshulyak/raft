@@ -9,8 +9,10 @@ import (
 )
 
 var (
+	// ErrProposalsOverflow raised in case nodes proposal queue overflows.
 	ErrProposalsOverflow = errors.New("proposals queue overflow")
-	ErrStopped           = errors.New("node is stopped")
+	// ErrStopped raised if node is shutting down due to a crash or a request.
+	ErrStopped = errors.New("node is stopped")
 )
 
 type bufferedProposals struct {
@@ -32,10 +34,14 @@ func (b bufferedProposals) run(ctx context.Context) {
 		}
 		select {
 		case <-ctx.Done():
+			for _, proposal := range batch {
+				proposal.Complete(ErrStopped)
+			}
 			return
 		case proposal := <-b.in:
 			if len(batch) == b.max {
 				proposal.Complete(ErrProposalsOverflow)
+				continue
 			}
 			batch = append(batch, proposal)
 		case out <- batch:
@@ -84,10 +90,8 @@ func (s *node) Propose(ctx context.Context, data []byte) (*Proposal, error) {
 	}
 }
 
-func (s *node) Push(ctx context.Context, msg Message) error {
+func (s *node) Push(msg Message) error {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
 	case s.inbound <- msg:
 		return nil
 	case <-s.ctx.Done():
@@ -101,6 +105,7 @@ func (s *node) run() (err error) {
 		timeout   = make(chan int)
 		app       *appUpdate
 		appC      chan *appUpdate
+		//mailboxes map[NodeID]*peerMailbox
 	)
 	runTicker(s.ctx, timeout, s.tick)
 	go bufferedProposals{
@@ -126,7 +131,6 @@ func (s *node) run() (err error) {
 					Proposals: update.Proposals,
 				}
 			}
-
 		}
 
 		if app != nil {
@@ -136,6 +140,7 @@ func (s *node) run() (err error) {
 		}
 		select {
 		case <-s.ctx.Done():
+			_ = s.raft.Next(ErrStopped)
 			return s.ctx.Err()
 		case batch := <-s.proposals:
 			err = s.raft.Next(batch)
@@ -147,4 +152,10 @@ func (s *node) run() (err error) {
 			app = nil
 		}
 	}
+}
+
+func (n *node) Stop() {
+	n.cancel()
+	n.server.Close()
+	n.streams.close()
 }

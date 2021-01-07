@@ -19,4 +19,7 @@ type Context struct {
 	TickInterval     time.Duration
 	HeartbeatTimeout int
 	ElectionTimeout  int
+	// FIXME configuration will change according to the consensus rules
+	// when cluster membership will be implemented
+	Configuration *Configuration
 }

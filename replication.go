@@ -8,14 +8,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func newPeerReactor(parent context.Context,
+func newReplicationChannel(parent context.Context,
 	logger *zap.SugaredLogger,
 	tick time.Duration,
 	out chan<- Message,
-	peer *peerState,
-) *peerReactor {
+	peer *replicationState,
+) *replicationChannel {
 	ctx, cancel := context.WithCancel(parent)
-	pr := &peerReactor{
+	pr := &replicationChannel{
 		ctx:    ctx,
 		cancel: cancel,
 		tick:   tick,
@@ -29,7 +29,7 @@ func newPeerReactor(parent context.Context,
 	return pr
 }
 
-type peerReactor struct {
+type replicationChannel struct {
 	ctx    context.Context
 	cancel func()
 	logger *zap.SugaredLogger
@@ -39,10 +39,10 @@ type peerReactor struct {
 	in  chan Message
 	out chan<- Message
 
-	peer *peerState
+	peer *replicationState
 }
 
-func (r *peerReactor) Send(msg Message) {
+func (r *replicationChannel) Send(msg Message) {
 	select {
 	case <-r.ctx.Done():
 		return
@@ -50,11 +50,11 @@ func (r *peerReactor) Send(msg Message) {
 	}
 }
 
-func (r *peerReactor) Close() {
+func (r *replicationChannel) Close() {
 	r.cancel()
 }
 
-func (r *peerReactor) run() (err error) {
+func (r *replicationChannel) run() (err error) {
 	defer func() {
 		// disk IO error will panic
 		rec := recover()

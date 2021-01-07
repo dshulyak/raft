@@ -16,9 +16,9 @@ func newLastMessageSender(
 	ctx context.Context,
 	logger *zap.SugaredLogger,
 	out chan<- Message,
-) *lastMessageSender {
+) *lastMessageChannel {
 	ctx, cancel := context.WithCancel(ctx)
-	sender := &lastMessageSender{
+	sender := &lastMessageChannel{
 		ctx:    ctx,
 		cancel: cancel,
 		logger: logger,
@@ -29,8 +29,8 @@ func newLastMessageSender(
 	return sender
 }
 
-// lastMessageSender buffers last message and ensures that it will be sent over the wire.
-type lastMessageSender struct {
+// lastMessageChannel buffers last message, dropping all previous messages.
+type lastMessageChannel struct {
 	ctx    context.Context
 	cancel func()
 
@@ -40,7 +40,7 @@ type lastMessageSender struct {
 	out chan<- Message
 }
 
-func (s *lastMessageSender) Send(msg Message) {
+func (s *lastMessageChannel) Send(msg Message) {
 	select {
 	case <-s.ctx.Done():
 		return
@@ -48,11 +48,11 @@ func (s *lastMessageSender) Send(msg Message) {
 	}
 }
 
-func (s *lastMessageSender) Close() {
+func (s *lastMessageChannel) Close() {
 	s.cancel()
 }
 
-func (s *lastMessageSender) run() {
+func (s *lastMessageChannel) run() {
 	var (
 		msg Message
 		out chan<- Message
@@ -77,20 +77,21 @@ func (s *lastMessageSender) run() {
 	}
 }
 
-type peerDelivery interface {
+type peerDeliveryChannel interface {
 	Send(Message)
 	Close()
 }
 
 // peerMailbox can be in one of two states:
-// - in leader state it will try run peerReactor as a delivery service
-// - in follower and candidate state it run delivery service that buffers
-//   last sent message
+// - in leader state it will run replication channel
+//   that will either restore follower logs or send append entries in pipeline
+// - in follower and candidate state it will run channel that buffers last sent message
+//   and delivers it once the stream is opened
 // in both cases peerMailbox is a non-blocking layer before the network
 type peerMailbox struct {
 	state   RaftState
 	mail    chan<- Message
-	current peerDelivery
+	current peerDeliveryChannel
 }
 
 func (m *peerMailbox) Update(global *Context, state RaftState) {
@@ -107,12 +108,12 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 	}
 	logger := global.Logger.Sugar()
 	if toLeader {
-		m.current = newPeerReactor(
+		m.current = newReplicationChannel(
 			global,
 			logger,
 			global.TickInterval,
 			m.mail,
-			newPeerState(
+			newReplicationState(
 				logger,
 				uint64(global.EntriesPerAppend),
 				global.HeartbeatTimeout,

@@ -102,7 +102,7 @@ func (t *testCluster) restart(id NodeID) {
 	}, t.logs[id], t.ds[id])
 }
 
-func (t *testCluster) runReplication(peer *peerState, to NodeID, next *AppendEntries) {
+func (t *testCluster) runReplication(peer *replicationState, to NodeID, next *AppendEntries) {
 	peer.init(next)
 	sm := t.states[to]
 	for next != nil {
@@ -121,8 +121,8 @@ func (t *testCluster) runReplication(peer *peerState, to NodeID, next *AppendEnt
 	}
 }
 
-func (t *testCluster) replicationPeer(id NodeID, maxEntries uint64, timeout int) *peerState {
-	return newPeerState(t.logger.Sugar(), maxEntries, timeout, t.logs[id])
+func (t *testCluster) replicationPeer(id NodeID, maxEntries uint64, timeout int) *replicationState {
+	return newReplicationState(t.logger.Sugar(), maxEntries, timeout, t.logs[id])
 }
 
 func (t *testCluster) size() int {

@@ -520,7 +520,6 @@ func toLeader(s *state, u *Update) *leader {
 	u.State = RaftLeader
 	u.Updated = true
 	return &l
-
 }
 
 type leader struct {
@@ -566,11 +565,15 @@ func (l *leader) tick(n int, u *Update) role {
 	return nil
 }
 
-func (l *leader) stepdown(term uint64, u *Update) *follower {
+func (l *leader) completeProposals(err error) {
 	for front := l.inflight.Front(); front != nil; front = front.Next() {
 		proposal := front.Value.(*Proposal)
-		proposal.Complete(ErrLeaderStepdown)
+		proposal.Complete(err)
 	}
+}
+
+func (l *leader) stepdown(term uint64, u *Update) *follower {
+	l.completeProposals(ErrLeaderStepdown)
 	return toFollower(l.state, term, u)
 }
 
@@ -621,6 +624,10 @@ func (l *leader) next(msg interface{}, u *Update) role {
 		l.sendProposals(u, m)
 	case []*Proposal:
 		l.sendProposals(u, m...)
+	case error:
+		if m != nil {
+			l.completeProposals(m)
+		}
 	}
 	return nil
 }
