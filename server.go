@@ -73,12 +73,12 @@ func (s *server) getConnector(id NodeID) *connector {
 	return s.connectors[id]
 }
 
-// Connect will ensure that there is one opened stream at every point of time.
+// Add will ensure that there is one opened stream at every point of time.
 // If node is not reachable it will be dialed in the background, according to the backoff
 // policy.
 // In case if two nodes will connect to each it is the protocol responsibility to
 // close redundant streams or make use of them.
-func (s *server) Connect(node *Node) {
+func (s *server) Add(node *Node) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, exist := s.connectors[node.ID]
@@ -103,7 +103,8 @@ func (s *server) Connect(node *Node) {
 	}
 }
 
-func (s *server) Disconnect(id NodeID) {
+// Remove persistent connector to a node. It doesn't close existing connections.
+func (s *server) Remove(id NodeID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, exist := s.connectors[id]
@@ -162,9 +163,10 @@ func (s *server) closeConnectors() {
 	}
 }
 
-func (s *server) Close() {
+func (s *server) Close() error {
 	s.cancel()
 	s.closeConnectors()
+	return s.tr.Close()
 }
 
 type connector struct {

@@ -79,7 +79,8 @@ func newNode(global *Context) *node {
 		global.ElectionTimeoutMin, global.ElectionTimeoutMax,
 		global.Configuration,
 		global.Storage,
-		global.State)
+		global.State,
+	)
 	n.streams = newStreamHandler(global.Logger, n.msgPipeline)
 	n.server = newServer(global, n.streams.handle)
 	// FIXME report error from run up the stack
@@ -135,12 +136,12 @@ func (n *node) sendMessages(u *Update) {
 func (n *node) manageConnections(conf *Configuration, u *Update) {
 	if u.State == RaftCandidate {
 		for i := range conf.Nodes {
-			n.server.Connect(&conf.Nodes[i])
+			n.server.Add(&conf.Nodes[i])
 		}
 
 	} else if u.State != 0 {
 		for i := range conf.Nodes {
-			n.server.Disconnect(conf.Nodes[i].ID)
+			n.server.Remove(conf.Nodes[i].ID)
 		}
 	}
 }

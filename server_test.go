@@ -40,7 +40,7 @@ func TestServerConnect(t *testing.T) {
 		}
 	})
 	defer srv2.Close()
-	srv1.Connect(&Node{ID: 2})
+	srv1.Add(&Node{ID: 2})
 	select {
 	case n := <-connected1:
 		require.Equal(t, NodeID(2), n)
@@ -54,7 +54,7 @@ func TestServerConnect(t *testing.T) {
 	case <-time.After(time.Millisecond):
 		require.FailNow(t, "timed out waiting for connection")
 	}
-	srv1.Disconnect(2)
+	srv1.Remove(2)
 	select {
 	case err := <-errc:
 		require.True(t, errors.Is(err, io.EOF), "error %v", err)
