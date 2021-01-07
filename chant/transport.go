@@ -218,10 +218,8 @@ func (s *Stream) ID() types.NodeID {
 	return s.id
 }
 
-func (s *Stream) Send(ctx context.Context, msg types.Message) error {
+func (s *Stream) Send(msg types.Message) error {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
 	case <-s.conn.ctx.Done():
 		return io.EOF
 	case s.w <- msg:
@@ -229,10 +227,8 @@ func (s *Stream) Send(ctx context.Context, msg types.Message) error {
 	}
 }
 
-func (s *Stream) Receive(ctx context.Context) (types.Message, error) {
+func (s *Stream) Receive() (types.Message, error) {
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	case <-s.conn.ctx.Done():
 		return nil, io.EOF
 	case msg := <-s.r:

@@ -8,13 +8,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func newPeerReactor(ctx context.Context,
+func newPeerReactor(parent context.Context,
 	logger *zap.SugaredLogger,
 	tick time.Duration,
 	out chan<- Message,
-	peer *peerState) *peerReactor {
-	ctx, cancel := context.WithCancel(ctx)
-	return &peerReactor{
+	peer *peerState,
+) *peerReactor {
+	ctx, cancel := context.WithCancel(parent)
+	pr := &peerReactor{
 		ctx:    ctx,
 		cancel: cancel,
 		tick:   tick,
@@ -22,6 +23,10 @@ func newPeerReactor(ctx context.Context,
 		in:     make(chan Message, 1),
 		peer:   peer,
 	}
+	// FIXME send error from run to some error handler
+	// if it exits with error application must shutdown
+	go pr.run()
+	return pr
 }
 
 type peerReactor struct {

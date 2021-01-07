@@ -3,7 +3,6 @@ package raft
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"time"
 
@@ -14,7 +13,7 @@ var (
 	ErrNotInCluster = errors.New("node not in the cluster")
 )
 
-type handler func(context.Context, MsgStream) error
+type handler func(MsgStream)
 
 func newServer(global *Context, protocol handler) *server {
 	ctx, cancel := context.WithCancel(global)
@@ -127,17 +126,14 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 				stream, err = conn.dialWithBackoff()
 			}
 			if err == nil && stream != nil {
-				err = s.protocol(s.ctx, stream)
+				s.protocol(stream)
 			}
-			if stream != nil && !errors.Is(err, io.EOF) {
+			if stream != nil {
 				stream.Close()
 			}
 			if stream != nil {
 				s.removeConnected(id)
 				stream = nil
-			}
-			if errors.Is(err, context.Canceled) {
-				return
 			}
 			connected = s.setConnected(id)
 			if !connected {

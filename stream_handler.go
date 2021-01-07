@@ -1,8 +1,8 @@
 package raft
 
 import (
-	"context"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
@@ -13,7 +13,7 @@ var ErrConnected = errors.New("already connected")
 
 type streamHandler struct {
 	logger *zap.SugaredLogger
-	push   func(context.Context, Message) error
+	push   func(Message) error
 
 	readTimeout, writeTimeout time.Duration
 
@@ -42,15 +42,13 @@ func (p *streamHandler) unregisterConnection(id NodeID) {
 	delete(p.connected, id)
 }
 
-func (p *streamHandler) reader(parent context.Context, stream MsgStream) error {
+func (p *streamHandler) reader(stream MsgStream) error {
 	for {
-		ctx, cancel := context.WithTimeout(parent, p.readTimeout)
-		msg, err := stream.Receive(ctx)
-		cancel()
+		msg, err := stream.Receive()
 		if err != nil {
 			return err
 		}
-		if err := p.push(parent, msg); err != nil {
+		if err := p.push(msg); err != nil {
 			return err
 		}
 	}
@@ -67,12 +65,20 @@ func (p *streamHandler) getSender(id NodeID) chan Message {
 	return sender
 }
 
-func (p *streamHandler) writer(parent context.Context, stream MsgStream) error {
+func (p *streamHandler) closeSender(id NodeID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sender, exist := p.sender[id]
+	if !exist {
+		return
+	}
+	close(sender)
+}
+
+func (p *streamHandler) writer(stream MsgStream) error {
 	sender := p.getSender(stream.ID())
 	for msg := range sender {
-		ctx, cancel := context.WithTimeout(parent, p.writeTimeout)
-		err := stream.Send(ctx, msg)
-		cancel()
+		err := stream.Send(msg)
 		if err != nil {
 			return err
 		}
@@ -80,9 +86,9 @@ func (p *streamHandler) writer(parent context.Context, stream MsgStream) error {
 	return nil
 }
 
-func (p *streamHandler) handle(ctx context.Context, stream MsgStream) error {
+func (p *streamHandler) handle(stream MsgStream) {
 	if !p.registerConnection(stream.ID()) {
-		return ErrConnected
+		stream.Close()
 	}
 	defer p.unregisterConnection(stream.ID())
 	var (
@@ -91,19 +97,19 @@ func (p *streamHandler) handle(ctx context.Context, stream MsgStream) error {
 	)
 	wg.Add(2)
 	go func() {
-		errc <- p.reader(ctx, stream)
+		errc <- p.reader(stream)
 		wg.Done()
 	}()
 	go func() {
-		errc <- p.writer(ctx, stream)
+		errc <- p.writer(stream)
 		wg.Done()
 	}()
 	wg.Wait()
 	close(errc)
 	for err := range errc {
-		if err != nil {
-			return err
+		if err != nil && !errors.Is(err, io.EOF) {
+			stream.Close()
 		}
 	}
-	return nil
+	return
 }

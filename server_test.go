@@ -22,9 +22,8 @@ func TestServerConnect(t *testing.T) {
 		Logger:    testLogger(t),
 		Transport: tr1,
 	}
-	srv1 := newServer(ctx1, func(_ context.Context, stream MsgStream) error {
+	srv1 := newServer(ctx1, func(stream MsgStream) {
 		connected1 <- stream.ID()
-		return nil
 	})
 	defer srv1.Close()
 	ctx2 := &Context{
@@ -33,14 +32,12 @@ func TestServerConnect(t *testing.T) {
 		Transport: tr2,
 	}
 	errc := make(chan error)
-	srv2 := newServer(ctx2, func(ctx context.Context, stream MsgStream) error {
+	srv2 := newServer(ctx2, func(stream MsgStream) {
 		connected2 <- stream.ID()
-		_, err := stream.Receive(ctx)
+		_, err := stream.Receive()
 		if err != nil {
 			errc <- err
-
 		}
-		return nil
 	})
 	defer srv2.Close()
 	srv1.Connect(&Node{ID: 2})

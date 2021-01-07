@@ -10,7 +10,7 @@ type Transport interface {
 
 type MsgStream interface {
 	ID() NodeID
-	Send(context.Context, Message) error
-	Receive(context.Context) (Message, error)
+	Send(Message) error
+	Receive() (Message, error)
 	Close() error
 }

@@ -36,7 +36,7 @@ func TestMsgStream(t *testing.T) {
 	second.HandleStream(func(stream types.MsgStream) {
 		go func() {
 			for {
-				msg, err := stream.Receive(context.TODO())
+				msg, err := stream.Receive()
 				if errors.Is(err, io.EOF) {
 					return
 				}
@@ -50,7 +50,7 @@ func TestMsgStream(t *testing.T) {
 
 	n := 3333
 	for i := 0; i < n; i++ {
-		require.NoError(t, stream.Send(context.TODO(), i))
+		require.NoError(t, stream.Send(i))
 		select {
 		case received := <-received:
 			require.Equal(t, i, received)
@@ -72,7 +72,7 @@ func TestMsgReverse(t *testing.T) {
 	second.HandleStream(func(stream types.MsgStream) {
 		go func() {
 			for i := 0; i < n; i++ {
-				if err := stream.Send(context.TODO(), i); err == io.EOF {
+				if err := stream.Send(i); err == io.EOF {
 					return
 				}
 			}
@@ -82,9 +82,7 @@ func TestMsgReverse(t *testing.T) {
 	stream, err := first.Dial(context.TODO(), &types.Node{ID: 2})
 	require.NoError(t, err)
 	for i := 0; i < n; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		msg, err := stream.Receive(ctx)
-		cancel()
+		msg, err := stream.Receive()
 		require.NoError(t, err)
 		require.Equal(t, i, msg)
 	}
