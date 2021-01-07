@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"sync"
 
 	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
@@ -84,17 +85,20 @@ type peerDeliveryChannel interface {
 
 // peerMailbox can be in one of two states:
 // - in leader state it will run replication channel
-//   that will either restore follower logs or send append entries in pipeline
+//   that will either restore follower logs or send append entries in pipelined mode
 // - in follower and candidate state it will run channel that buffers last sent message
-//   and delivers it once the stream is opened
+//   and delivers it once the stream is opened/restored
 // in both cases peerMailbox is a non-blocking layer before the network
 type peerMailbox struct {
+	mu      sync.Mutex
 	state   RaftState
 	mail    chan<- Message
 	current peerDeliveryChannel
 }
 
 func (m *peerMailbox) Update(global *Context, state RaftState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	// mailbox type changes only on transitions:
 	// from candidate to leader - 1st type
 	// from leader or empty to not leader  - 2nd type
@@ -125,11 +129,24 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 	m.current = newLastMessageSender(global, logger, m.mail)
 }
 
+func (m *peerMailbox) Response(msg Message) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state == RaftLeader {
+		m.current.Send(msg)
+	}
+	return
+}
+
 func (m *peerMailbox) Send(msg Message) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.current.Send(msg)
 }
 
 func (m *peerMailbox) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.current == nil {
 		return
 	}

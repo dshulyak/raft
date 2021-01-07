@@ -3,9 +3,11 @@ package raft
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/dshulyak/raftlog"
+	"go.uber.org/zap"
 )
 
 var (
@@ -55,8 +57,39 @@ type appUpdate struct {
 	Proposals []*Proposal
 }
 
+func newNode(global *Context) *node {
+	ctx, cancel := context.WithCancel(global)
+	n := &node{
+		global:       global,
+		logger:       global.Logger.Sugar(),
+		ctx:          ctx,
+		cancel:       cancel,
+		tick:         global.TickInterval,
+		maxProposals: global.ProposalsBuffer,
+		mailboxes:    map[NodeID]*peerMailbox{},
+		inbound:      make(chan Message, 1),
+		// proposals are buffered until node is ready to process them
+		proposals: make(chan *Proposal),
+		// logs are buffered until application is ready to process them
+		application: make(chan *appUpdate),
+	}
+	n.raft = newStateMachine(
+		global.Logger,
+		global.ID,
+		global.ElectionTimeoutMin, global.ElectionTimeoutMax,
+		global.Configuration,
+		global.Storage,
+		global.State)
+	n.streams = newStreamHandler(global.Logger, n.msgPipeline)
+	n.server = newServer(global, n.streams.handle)
+	// FIXME report error from run up the stack
+	go n.run()
+	return n
+}
+
 type node struct {
 	global       *Context
+	logger       *zap.SugaredLogger
 	ctx          context.Context
 	cancel       func()
 	tick         time.Duration
@@ -66,9 +99,57 @@ type node struct {
 	streams *streamHandler
 	server  *server
 
+	bmu       sync.RWMutex
+	mailboxes map[NodeID]*peerMailbox
+
 	inbound     chan Message
 	proposals   chan *Proposal
 	application chan *appUpdate
+}
+
+func (n *node) getMailbox(id NodeID) *peerMailbox {
+	n.bmu.Lock()
+	defer n.bmu.Unlock()
+	return n.mailboxes[id]
+}
+
+func (n *node) sendMessages(u *Update) {
+	if len(u.Msgs) == 0 {
+		return
+	}
+	n.bmu.Lock()
+	defer n.bmu.Unlock()
+	for _, msg := range u.Msgs {
+		box, exist := n.mailboxes[msg.To]
+		if !exist {
+			box = &peerMailbox{
+				mail: n.streams.getSender(msg.To),
+			}
+			n.mailboxes[msg.To] = box
+		}
+		box.Update(n.global, u.State)
+		box.Send(msg.Message)
+	}
+}
+
+func (n *node) manageConnections(conf *Configuration, u *Update) {
+	if u.State == RaftCandidate {
+		for i := range conf.Nodes {
+			n.server.Connect(&conf.Nodes[i])
+		}
+
+	} else if u.State != 0 {
+		for i := range conf.Nodes {
+			n.server.Disconnect(conf.Nodes[i].ID)
+		}
+	}
+}
+
+func (n *node) msgPipeline(id NodeID, msg Message) {
+	if mailbox := n.getMailbox(id); mailbox != nil {
+		mailbox.Response(msg)
+	}
+	_ = n.Push(msg)
 }
 
 func (s *node) Propose(ctx context.Context, data []byte) (*Proposal, error) {
@@ -99,27 +180,48 @@ func (s *node) Push(msg Message) error {
 	}
 }
 
-func (s *node) run() (err error) {
+func (n *node) run() (err error) {
 	var (
 		proposals = make(chan []*Proposal, 1)
 		timeout   = make(chan int)
 		app       *appUpdate
 		appC      chan *appUpdate
-		//mailboxes map[NodeID]*peerMailbox
 	)
-	runTicker(s.ctx, timeout, s.tick)
+	runTicker(n.ctx, timeout, n.tick)
 	go bufferedProposals{
 		out: proposals,
-		in:  s.proposals,
-		max: s.maxProposals,
-	}.run(s.ctx)
+		in:  n.proposals,
+		max: n.maxProposals,
+	}.run(n.ctx)
 
 	for {
+		if app != nil {
+			appC = n.application
+		} else {
+			appC = nil
+		}
+		select {
+		case <-n.ctx.Done():
+			_ = n.raft.Next(ErrStopped)
+			err = n.ctx.Err()
+		case batch := <-n.proposals:
+			err = n.raft.Next(batch)
+		case msg := <-n.inbound:
+			err = n.raft.Next(msg)
+		case count := <-timeout:
+			err = n.raft.Tick(count)
+		case appC <- app:
+			app = nil
+		}
 		if err != nil {
-			s.cancel()
+			if !errors.Is(err, context.Canceled) {
+				n.logger.Errorw("node will be terminated", "error", err)
+				n.Stop()
+			}
 			return err
 		}
-		update := s.raft.Update()
+
+		update := n.raft.Update()
 		if update != nil {
 			if update.CommitLog.Index != 0 {
 				if app != nil {
@@ -131,25 +233,8 @@ func (s *node) run() (err error) {
 					Proposals: update.Proposals,
 				}
 			}
-		}
-
-		if app != nil {
-			appC = s.application
-		} else {
-			appC = nil
-		}
-		select {
-		case <-s.ctx.Done():
-			_ = s.raft.Next(ErrStopped)
-			return s.ctx.Err()
-		case batch := <-s.proposals:
-			err = s.raft.Next(batch)
-		case msg := <-s.inbound:
-			err = s.raft.Next(msg)
-		case n := <-timeout:
-			err = s.raft.Tick(n)
-		case appC <- app:
-			app = nil
+			n.manageConnections(n.global.Configuration, update)
+			n.sendMessages(update)
 		}
 	}
 }

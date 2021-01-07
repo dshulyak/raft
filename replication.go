@@ -24,7 +24,7 @@ func newReplicationChannel(parent context.Context,
 		peer:   peer,
 	}
 	// FIXME send error from run to some error handler
-	// if it exits with error application must shutdown
+	// if run exits with error application must shutdown
 	go pr.run()
 	return pr
 }

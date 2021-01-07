@@ -2,7 +2,6 @@ package raft
 
 import (
 	"errors"
-	"io"
 	"sync"
 
 	"go.uber.org/zap"
@@ -10,7 +9,7 @@ import (
 
 var ErrConnected = errors.New("already connected")
 
-type msgPipeline func(Message) error
+type msgPipeline func(NodeID, Message)
 
 func newStreamHandler(logger *zap.Logger, push msgPipeline) *streamHandler {
 	return &streamHandler{
@@ -56,9 +55,7 @@ func (p *streamHandler) reader(stream MsgStream) error {
 		if err != nil {
 			return err
 		}
-		if err := p.push(msg); err != nil {
-			return err
-		}
+		p.push(stream.ID(), msg)
 	}
 }
 
@@ -105,27 +102,21 @@ func (p *streamHandler) writer(stream MsgStream) error {
 func (p *streamHandler) handle(stream MsgStream) {
 	if !p.registerConnection(stream.ID()) {
 		stream.Close()
+		return
 	}
 	defer p.unregisterConnection(stream.ID())
-	var (
-		wg   sync.WaitGroup
-		errc = make(chan error, 2)
-	)
+	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		errc <- p.reader(stream)
+		err := p.reader(stream)
+		p.logger.Debugw("reader stream was closed", "peer", stream.ID(), "error", err)
 		wg.Done()
 	}()
 	go func() {
-		errc <- p.writer(stream)
+		err := p.writer(stream)
+		p.logger.Debugw("writer stream was closed", "peer", stream.ID(), "error", err)
 		wg.Done()
 	}()
 	wg.Wait()
-	close(errc)
-	for err := range errc {
-		if err != nil && !errors.Is(err, io.EOF) {
-			stream.Close()
-		}
-	}
 	return
 }

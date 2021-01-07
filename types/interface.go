@@ -1,6 +1,10 @@
 package types
 
-import "context"
+import (
+	"context"
+
+	"github.com/dshulyak/raftlog"
+)
 
 type Transport interface {
 	Dial(context.Context, *Node) (MsgStream, error)
@@ -13,4 +17,8 @@ type MsgStream interface {
 	Send(Message) error
 	Receive() (Message, error)
 	Close() error
+}
+
+type Application interface {
+	Apply(*raftlog.LogEntry)
 }

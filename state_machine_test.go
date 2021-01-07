@@ -94,12 +94,8 @@ type testCluster struct {
 }
 
 func (t *testCluster) restart(id NodeID) {
-	t.states[id] = newStateMachine(t.logger, StateMachineConfig{
-		ID:            id,
-		MinTicks:      t.minTicks,
-		MaxTicks:      t.maxTicks,
-		Configuration: t.configuration,
-	}, t.logs[id], t.ds[id])
+	t.states[id] = newStateMachine(t.logger, id, t.minTicks, t.maxTicks,
+		t.configuration, t.logs[id], t.ds[id])
 }
 
 func (t *testCluster) runReplication(peer *replicationState, to NodeID, next *AppendEntries) {

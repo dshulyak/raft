@@ -176,23 +176,23 @@ type role interface {
 	next(interface{}, *Update) role
 }
 
-type StateMachineConfig struct {
-	ID                 NodeID
-	Configuration      *Configuration
-	MinTicks, MaxTicks int
-}
-
-func newStateMachine(logger *zap.Logger, config StateMachineConfig, log *raftlog.Storage, ds *DurableState) *stateMachine {
+func newStateMachine(logger *zap.Logger,
+	id NodeID,
+	minTicks, maxTicks int,
+	conf *Configuration,
+	log *raftlog.Storage,
+	ds *DurableState,
+) *stateMachine {
 	update := &Update{}
 	return &stateMachine{
 		update: update,
 		role: toFollower(&state{
 			DurableState:  ds,
-			logger:        logger.With(zap.Uint64("ID", uint64(config.ID))).Sugar(),
-			minElection:   config.MinTicks,
-			maxElection:   config.MaxTicks,
-			id:            config.ID,
-			configuration: config.Configuration,
+			logger:        logger.With(zap.Uint64("ID", uint64(id))).Sugar(),
+			minElection:   minTicks,
+			maxElection:   maxTicks,
+			id:            id,
+			configuration: conf,
 			log:           log,
 		}, 0, update),
 	}
