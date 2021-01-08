@@ -2,7 +2,6 @@ package raft
 
 import (
 	"container/list"
-	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -15,7 +14,6 @@ import (
 
 var (
 	ErrLeaderStepdown = errors.New("leader stepdown")
-	ErrShutdown       = errors.New("node shutdown")
 	ErrUnexpected     = errors.New("unexpected error")
 )
 
@@ -29,37 +27,8 @@ type (
 	RequestVoteResponse   = types.RequestVoteResponse
 	AppendEntries         = types.AppendEntries
 	AppendEntriesResponse = types.AppendEntriesResponse
+	Proposal              = types.Proposal
 )
-
-type Proposal struct {
-	ctx    context.Context
-	result chan error
-	Entry  *raftlog.LogEntry
-}
-
-func (p *Proposal) Complete(err error) {
-	if p.ctx == nil {
-		return
-	}
-	select {
-	case <-p.ctx.Done():
-	case p.result <- err:
-	}
-}
-
-func (p *Proposal) Wait(ctx context.Context) error {
-	if p.ctx == nil {
-		panic("proposal is not fully initialized")
-	}
-	select {
-	case <-p.ctx.Done():
-		return ErrShutdown
-	case err := <-p.result:
-		return err
-	case <-p.ctx.Done():
-		return p.ctx.Err()
-	}
-}
 
 type MessageTo struct {
 	To      NodeID
@@ -624,10 +593,6 @@ func (l *leader) next(msg interface{}, u *Update) role {
 		l.sendProposals(u, m)
 	case []*Proposal:
 		l.sendProposals(u, m...)
-	case error:
-		if m != nil {
-			l.completeProposals(m)
-		}
 	}
 	return nil
 }

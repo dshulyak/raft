@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
 	"go.uber.org/zap"
 )
@@ -67,11 +68,9 @@ func newNode(global *Context) *node {
 		tick:         global.TickInterval,
 		maxProposals: global.ProposalsBuffer,
 		mailboxes:    map[NodeID]*peerMailbox{},
-		inbound:      make(chan Message, 1),
+		messages:     make(chan Message, 1),
 		// proposals are buffered until node is ready to process them
 		proposals: make(chan *Proposal),
-		// logs are buffered until application is ready to process them
-		application: make(chan *appUpdate),
 	}
 	n.raft = newStateMachine(
 		global.Logger,
@@ -81,6 +80,7 @@ func newNode(global *Context) *node {
 		global.Storage,
 		global.State,
 	)
+	n.app = newAppStateMachine(global)
 	n.streams = newStreamHandler(global.Logger, n.msgPipeline)
 	n.server = newServer(global, n.streams.handle)
 	// FIXME report error from run up the stack
@@ -96,6 +96,7 @@ type node struct {
 	tick         time.Duration
 	maxProposals int
 
+	app     *appStateMachine
 	raft    *stateMachine
 	streams *streamHandler
 	server  *server
@@ -103,9 +104,8 @@ type node struct {
 	bmu       sync.RWMutex
 	mailboxes map[NodeID]*peerMailbox
 
-	inbound     chan Message
-	proposals   chan *Proposal
-	application chan *appUpdate
+	messages  chan Message
+	proposals chan *Proposal
 }
 
 func (n *node) getMailbox(id NodeID) *peerMailbox {
@@ -153,15 +153,13 @@ func (n *node) msgPipeline(id NodeID, msg Message) {
 	_ = n.Push(msg)
 }
 
-func (s *node) Propose(ctx context.Context, data []byte) (*Proposal, error) {
-	proposal := &Proposal{
-		ctx:    s.ctx,
-		result: make(chan error, 1),
-		Entry: &raftlog.LogEntry{
-			OpType: raftlog.LogNoop,
+func (s *node) Propose(ctx context.Context, data []byte) (*types.Proposal, error) {
+	proposal := types.NewProposal(s.ctx,
+		&raftlog.LogEntry{
+			OpType: raftlog.LogApplication,
 			Op:     data,
-		},
-	}
+		})
+
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -174,7 +172,7 @@ func (s *node) Propose(ctx context.Context, data []byte) (*Proposal, error) {
 
 func (s *node) Push(msg Message) error {
 	select {
-	case s.inbound <- msg:
+	case s.messages <- msg:
 		return nil
 	case <-s.ctx.Done():
 		return ErrStopped
@@ -186,7 +184,7 @@ func (n *node) run() (err error) {
 		proposals = make(chan []*Proposal, 1)
 		timeout   = make(chan int)
 		app       *appUpdate
-		appC      chan *appUpdate
+		appC      chan<- *appUpdate
 	)
 	runTicker(n.ctx, timeout, n.tick)
 	go bufferedProposals{
@@ -197,17 +195,16 @@ func (n *node) run() (err error) {
 
 	for {
 		if app != nil {
-			appC = n.application
+			appC = n.app.updates()
 		} else {
 			appC = nil
 		}
 		select {
 		case <-n.ctx.Done():
-			_ = n.raft.Next(ErrStopped)
 			err = n.ctx.Err()
 		case batch := <-n.proposals:
 			err = n.raft.Next(batch)
-		case msg := <-n.inbound:
+		case msg := <-n.messages:
 			err = n.raft.Next(msg)
 		case count := <-timeout:
 			err = n.raft.Tick(count)

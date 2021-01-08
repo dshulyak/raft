@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -72,4 +73,42 @@ var confChangeString = [...]string{"Empty", "Add", "Delete"}
 type ConfChange struct {
 	Type ConfChangeType
 	Node Node
+}
+
+func NewProposal(parent context.Context, entry *raftlog.LogEntry) *Proposal {
+	return &Proposal{
+		ctx:    parent,
+		result: make(chan error, 1),
+		Entry:  entry,
+	}
+}
+
+type Proposal struct {
+	ctx    context.Context
+	result chan error
+	Entry  *raftlog.LogEntry
+}
+
+func (p *Proposal) Complete(err error) {
+	if p.ctx == nil {
+		return
+	}
+	select {
+	case <-p.ctx.Done():
+	case p.result <- err:
+	}
+}
+
+func (p *Proposal) Wait(ctx context.Context) error {
+	if p.ctx == nil {
+		panic("proposal is not fully initialized")
+	}
+	select {
+	case <-p.ctx.Done():
+		return p.ctx.Err()
+	case err := <-p.result:
+		return err
+	case <-p.ctx.Done():
+		return p.ctx.Err()
+	}
 }

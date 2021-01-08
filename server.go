@@ -96,7 +96,9 @@ func (s *server) Add(node *Node) {
 		_, exist := s.connected[node.ID]
 		// if stream is not opened spawn a connector goroutine
 		// otherwise when an already accepted stream will be closing
-		// it will check that the connector exist
+		// it will check if connector exists or not
+		// this is done in order for dialed and accepted streams to
+		// have shared codepath
 		if !exist {
 			s.accept(node.ID, nil)
 		}
@@ -128,9 +130,6 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 			}
 			if err == nil && stream != nil {
 				s.protocol(stream)
-			}
-			if stream != nil {
-				stream.Close()
 			}
 			if stream != nil {
 				s.removeConnected(id)

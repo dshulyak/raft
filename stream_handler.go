@@ -100,8 +100,8 @@ func (p *streamHandler) writer(stream MsgStream) error {
 }
 
 func (p *streamHandler) handle(stream MsgStream) {
+	defer stream.Close()
 	if !p.registerConnection(stream.ID()) {
-		stream.Close()
 		return
 	}
 	defer p.unregisterConnection(stream.ID())

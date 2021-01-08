@@ -12,8 +12,9 @@ import (
 type Context struct {
 	context.Context
 
-	ID        NodeID
+	ID        types.NodeID
 	Transport types.Transport
+	App       types.Application
 
 	// EntriesPerAppend max number of entries in a single AppendEntries.
 	EntriesPerAppend int
@@ -29,7 +30,7 @@ type Context struct {
 
 	// Timeout for dialing to a peer.
 	DialTimeout time.Duration
-	// Backoff will be doubled on every error. If peer initiates
+	// Backoff will be doubled on every error. If remote peer initiates
 	// a stream Backoff is reset to 0.
 	Backoff time.Duration
 
@@ -43,5 +44,5 @@ type Context struct {
 
 	// FIXME configuration will change according to the consensus rules
 	// when cluster membership will be implemented
-	Configuration *Configuration
+	Configuration *types.Configuration
 }

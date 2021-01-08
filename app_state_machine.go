@@ -9,15 +9,19 @@ import (
 	"go.uber.org/zap"
 )
 
-func newAppStateMachine(global *Context, updates <-chan *appUpdate) *appStateMachine {
+func newAppStateMachine(global *Context) *appStateMachine {
 	ctx, cancel := context.WithCancel(global.Context)
-	return &appStateMachine{
-		ctx:     ctx,
-		cancel:  cancel,
-		logger:  global.Logger.Sugar(),
-		log:     global.Storage,
-		updates: updates,
+	sm := &appStateMachine{
+		ctx:      ctx,
+		cancel:   cancel,
+		logger:   global.Logger.Sugar(),
+		log:      global.Storage,
+		app:      global.App,
+		appliedC: make(chan uint64),
+		updatesC: make(chan *appUpdate),
 	}
+	go sm.run()
+	return sm
 }
 
 type appStateMachine struct {
@@ -32,17 +36,39 @@ type appStateMachine struct {
 	app types.Application
 	log *raftlog.Storage
 
-	updates <-chan *appUpdate
+	appliedC chan uint64
+	updatesC chan *appUpdate
+}
+
+func (a *appStateMachine) updates() chan<- *appUpdate {
+	return a.updatesC
+}
+
+func (a *appStateMachine) applied() <-chan uint64 {
+	return a.appliedC
 }
 
 func (a *appStateMachine) run() error {
+	var (
+		learned uint64
+		applied chan uint64
+	)
 	for {
 		select {
 		case <-a.ctx.Done():
 			return a.ctx.Err()
-		case update := <-a.updates:
+		case applied <- learned:
+			applied = nil
+		case update := <-a.updatesC:
+			a.logger.Debugw("app received update", "commit", update.Commit)
 			if err := a.onUpdate(update); err != nil {
+				a.logger.Debugw("app state macine closed with error", "error", err)
 				return err
+			}
+			a.logger.Debugw("app processed update", "commit", update.Commit)
+			if a.lastApplied != learned {
+				learned = a.lastApplied
+				applied = a.appliedC
 			}
 		}
 	}
@@ -66,17 +92,19 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 			proposal = u.Proposals[next-recent]
 			entry = proposal.Entry
 		} else {
-			ent, err := a.log.Get(int(next))
+			ent, err := a.log.Get(int(next) - 1)
 			if err != nil {
 				return err
 			}
 			entry = &ent
 		}
-		a.app.Apply(entry)
-		a.lastApplied = next
-		if proposal != nil {
-			proposal.Complete(nil)
+		if entry.OpType == raftlog.LogApplication {
+			a.logger.Debugw("applying entry", "index", entry.Index, "term", entry.Term, "proposed", proposal != nil)
+			a.app.Apply(entry, proposal)
+		} else {
+
 		}
+		a.lastApplied = next
 	}
 	return nil
 }

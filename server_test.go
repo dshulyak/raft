@@ -23,6 +23,7 @@ func TestServerConnect(t *testing.T) {
 		Transport: tr1,
 	}
 	srv1 := newServer(ctx1, func(stream MsgStream) {
+		defer stream.Close()
 		connected1 <- stream.ID()
 	})
 	defer srv1.Close()
@@ -33,6 +34,7 @@ func TestServerConnect(t *testing.T) {
 	}
 	errc := make(chan error)
 	srv2 := newServer(ctx2, func(stream MsgStream) {
+		defer stream.Close()
 		connected2 <- stream.ID()
 		_, err := stream.Receive()
 		if err != nil {

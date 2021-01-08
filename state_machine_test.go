@@ -28,7 +28,7 @@ func testLogger(t TestingHelper) *zap.Logger {
 	t.Helper()
 	var level zapcore.Level
 	require.NoError(t, level.Set(*logLevel))
-	return zaptest.NewLogger(t, zaptest.Level(level))
+	return zaptest.NewLogger(t, zaptest.Level(level), zaptest.WrapOptions(zap.AddCaller()))
 }
 
 func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
