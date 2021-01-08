@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	"io"
 	"sync"
 
 	"go.uber.org/zap"
@@ -100,23 +101,35 @@ func (p *streamHandler) writer(stream MsgStream) error {
 }
 
 func (p *streamHandler) handle(stream MsgStream) {
-	defer stream.Close()
 	if !p.registerConnection(stream.ID()) {
+		stream.Close()
 		return
 	}
 	defer p.unregisterConnection(stream.ID())
-	var wg sync.WaitGroup
-	wg.Add(2)
+
+	errc := make(chan error, 2)
 	go func() {
 		err := p.reader(stream)
 		p.logger.Debugw("reader stream was closed", "peer", stream.ID(), "error", err)
-		wg.Done()
+		errc <- err
 	}()
 	go func() {
 		err := p.writer(stream)
 		p.logger.Debugw("writer stream was closed", "peer", stream.ID(), "error", err)
-		wg.Done()
+		errc <- err
 	}()
-	wg.Wait()
-	return
+
+	n := 0
+	for err := range errc {
+		if err != nil && !errors.Is(err, io.EOF) {
+			stream.Close()
+			return
+		}
+		n++
+		if n == 2 {
+			stream.Close()
+			return
+		}
+	}
+	panic("unreachable!")
 }
