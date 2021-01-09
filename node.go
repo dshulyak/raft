@@ -153,8 +153,8 @@ func (n *node) msgPipeline(id NodeID, msg Message) {
 	_ = n.Push(msg)
 }
 
-func (s *node) Propose(ctx context.Context, data []byte) (*types.Proposal, error) {
-	proposal := types.NewProposal(s.ctx,
+func (n *node) Propose(ctx context.Context, data []byte) (*types.Proposal, error) {
+	proposal := types.NewProposal(n.ctx,
 		&raftlog.LogEntry{
 			OpType: raftlog.LogApplication,
 			Op:     data,
@@ -163,28 +163,31 @@ func (s *node) Propose(ctx context.Context, data []byte) (*types.Proposal, error
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-s.ctx.Done():
+	case <-n.ctx.Done():
 		return nil, ErrStopped
-	case s.proposals <- proposal:
+	case n.proposals <- proposal:
 		return proposal, nil
 	}
 }
 
-func (s *node) Push(msg Message) error {
+func (n *node) Push(msg Message) error {
 	select {
-	case s.messages <- msg:
+	case n.messages <- msg:
 		return nil
-	case <-s.ctx.Done():
+	case <-n.ctx.Done():
 		return ErrStopped
 	}
 }
 
 func (n *node) run() (err error) {
 	var (
-		proposals = make(chan []*Proposal, 1)
-		timeout   = make(chan int)
-		app       *appUpdate
-		appC      chan<- *appUpdate
+		// node shouldn't consume from buffer until the leader is known
+		proposals        = make(chan []*Proposal)
+		blockedProposals chan []*Proposal
+
+		timeout = make(chan int)
+		app     *appUpdate
+		appC    chan<- *appUpdate
 	)
 	runTicker(n.ctx, timeout, n.tick)
 	go bufferedProposals{
@@ -202,7 +205,7 @@ func (n *node) run() (err error) {
 		select {
 		case <-n.ctx.Done():
 			err = n.ctx.Err()
-		case batch := <-n.proposals:
+		case batch := <-blockedProposals:
 			err = n.raft.Next(batch)
 		case msg := <-n.messages:
 			err = n.raft.Next(msg)
@@ -221,18 +224,26 @@ func (n *node) run() (err error) {
 
 		update := n.raft.Update()
 		if update != nil {
-			if update.CommitLog.Index != 0 {
+			if update.Commit != 0 {
 				if app != nil {
 					app.Proposals = append(app.Proposals, update.Proposals...)
-					app.Commit = update.CommitLog.Index
+					app.Commit = update.Commit
 				}
 				app = &appUpdate{
-					Commit:    update.CommitLog.Index,
+					Commit:    update.Commit,
 					Proposals: update.Proposals,
 				}
 			}
 			n.manageConnections(n.global.Configuration, update)
 			n.sendMessages(update)
+			switch update.LeaderState {
+			case LeaderKnown:
+				n.logger.Debugw("leader was elected. accepting proposals")
+				blockedProposals = proposals
+			case LeaderUnknown:
+				n.logger.Debugw("leader is unknown. stopped accepting proposals")
+				blockedProposals = nil
+			}
 		}
 	}
 }

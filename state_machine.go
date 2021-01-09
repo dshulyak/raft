@@ -17,6 +17,14 @@ var (
 	ErrUnexpected     = errors.New("unexpected error")
 )
 
+type ErrRedirect struct {
+	Leader *types.Node
+}
+
+func (e *ErrRedirect) Error() string {
+	return fmt.Sprintf("redirect to %s", e.Leader)
+}
+
 var None NodeID
 
 type (
@@ -51,12 +59,19 @@ func (s RaftState) String() string {
 	return raftStateString[s]
 }
 
+const (
+	LeaderEnmpty = iota
+	LeaderKnown
+	LeaderUnknown
+)
+
 type Update struct {
-	Updated   bool
-	Msgs      []MessageTo
-	Proposals []*Proposal
-	State     RaftState
-	CommitLog LogHeader
+	Updated     bool
+	Msgs        []MessageTo
+	Proposals   []*Proposal
+	LeaderState int
+	State       RaftState
+	Commit      uint64
 }
 
 type state struct {
@@ -68,6 +83,7 @@ type state struct {
 	id     NodeID
 	leader NodeID
 
+	nodes         map[NodeID]*Node
 	configuration *Configuration
 
 	*DurableState
@@ -92,8 +108,7 @@ func (s *state) commit(u *Update, commited uint64) {
 	}
 	s.logger.Debugw("entry commited", "index", commited, "term", s.term)
 	s.commitIndex = commited
-	u.CommitLog.Index = commited
-	u.CommitLog.Term = s.term
+	u.Commit = commited
 	u.Updated = true
 }
 
@@ -153,6 +168,11 @@ func newStateMachine(logger *zap.Logger,
 	ds *DurableState,
 ) *stateMachine {
 	update := &Update{}
+	nodes := map[NodeID]*Node{}
+	for i := range conf.Nodes {
+		node := &conf.Nodes[i]
+		nodes[node.ID] = node
+	}
 	return &stateMachine{
 		update: update,
 		role: toFollower(&state{
@@ -161,6 +181,7 @@ func newStateMachine(logger *zap.Logger,
 			minElection:   minTicks,
 			maxElection:   maxTicks,
 			id:            id,
+			nodes:         nodes,
 			configuration: conf,
 			log:           log,
 		}, 0, update),
@@ -213,12 +234,14 @@ func (s *stateMachine) Update() *Update {
 
 func toFollower(s *state, term uint64, u *Update) *follower {
 	s.resetTicks()
+	s.leader = None
 	if term > s.term {
 		s.term = term
 		s.votedFor = None
 		s.must(s.Sync(), "failed to sync durable state")
 	}
 	u.State = RaftFollower
+	u.LeaderState = LeaderUnknown
 	u.Updated = true
 	return &follower{state: s}
 }
@@ -244,6 +267,14 @@ func (f *follower) next(msg interface{}, u *Update) role {
 		return f.onRequestVote(m, u)
 	case *AppendEntries:
 		return f.onAppendEntries(m, u)
+	case []*Proposal:
+		if f.leader == None {
+			f.logger.Panicw("proposals can't be sent while leader is not elected")
+		}
+		redirect := &ErrRedirect{Leader: f.nodes[f.leader]}
+		for _, proposal := range m {
+			proposal.Complete(redirect)
+		}
 	}
 	return nil
 }
@@ -259,6 +290,11 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		f.term = msg.Term
 		f.votedFor = None
 		f.must(f.Sync(), "failed to sync durable state")
+	}
+	if f.leader == None {
+		f.leader = msg.Leader
+		u.LeaderState = LeaderKnown
+		u.Updated = true
 	}
 	f.resetTicks()
 	f.logger.Debugw("append entries",
@@ -465,6 +501,8 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 			return nil
 		}
 		return toLeader(c.state, u)
+	case []*Proposal:
+		c.logger.Panicw("proposals can't be sent while leader is not elected")
 	}
 	return nil
 }
@@ -487,6 +525,7 @@ func toLeader(s *state, u *Update) *leader {
 		OpType: raftlog.LogNoop,
 	}})
 	u.State = RaftLeader
+	u.LeaderState = LeaderKnown
 	u.Updated = true
 	return &l
 }

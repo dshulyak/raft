@@ -470,7 +470,7 @@ func (c *rapidCleanup) Run() {
 
 type rapidTestState struct {
 	leader NodeID
-	commit LogHeader
+	commit uint64
 }
 
 type clusterMachine struct {
@@ -518,23 +518,22 @@ func (c *clusterMachine) Propose(t *rapid.T) {
 	}
 	update := c.cluster.propose(c.state.leader, &raftlog.LogEntry{OpType: raftlog.LogApplication})
 	update = c.cluster.run(c.cleanup, update, c.state.leader)
-	if update != nil && update.CommitLog.Term != 0 {
-		c.state.commit = update.CommitLog
+	if update != nil && update.Commit != 0 {
+		c.state.commit = update.Commit
 	}
 }
 
 func (c *clusterMachine) Check(t *rapid.T) {
-	if c.state.commit.Term == 0 && c.state.commit.Index == 0 {
+	if c.state.commit == 0 {
 		return
 	}
 	majority := c.cluster.size()/2 + 1
 	n := 0
 	c.cluster.iterateLogs(func(log *raftlog.Storage) bool {
-		entry, err := log.Get(int(c.state.commit.Index))
+		_, err := log.Get(int(c.state.commit))
 		if err != nil {
 			require.EqualError(t, err, raftlog.ErrEntryNotFound.Error())
 		}
-		require.Equal(t, c.state.commit.Term, entry.Term)
 		n++
 		return true
 	})

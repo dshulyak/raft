@@ -31,7 +31,7 @@ type Context struct {
 	// Timeout for dialing to a peer.
 	DialTimeout time.Duration
 	// Backoff will be doubled on every error. If remote peer initiates
-	// a stream Backoff is reset to 0.
+	// a stream backoff is reset to 0.
 	Backoff time.Duration
 
 	// Heartbeat and Election timeouts expressed in TickInterval's.
