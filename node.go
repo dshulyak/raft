@@ -84,7 +84,12 @@ func newNode(global *Context) *node {
 	n.streams = newStreamHandler(global.Logger, n.msgPipeline)
 	n.server = newServer(global, n.streams.handle)
 	// FIXME report error from run up the stack
-	go n.run()
+	go func() {
+		if err := n.run(); err != nil {
+			n.logger.Errorw("raft node crashed", "error", err)
+			panic("raft node crashed")
+		}
+	}()
 	return n
 }
 

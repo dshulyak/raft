@@ -229,6 +229,9 @@ func (s *stateMachine) Update() *Update {
 	}
 	u := s.update
 	s.update = &Update{}
+	if u.State > 0 {
+		s.update.State = u.State
+	}
 	return u
 }
 
@@ -251,7 +254,6 @@ type follower struct {
 }
 
 func (f *follower) tick(n int, u *Update) role {
-	f.logger.Debugw("election ticker reduced", "election", f.election, "ticks", n)
 	f.election -= n
 	if f.election <= 0 {
 		f.logger.Debugw("election timeout elapsed. transitioning to candidate",

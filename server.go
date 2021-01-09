@@ -79,11 +79,11 @@ func (s *server) getConnector(id NodeID) *connector {
 // In case if two nodes will connect to each it is the protocol responsibility to
 // close redundant streams or make use of them.
 func (s *server) Add(node *Node) {
-	s.logger.Debugw("adding dialer for a peer", "peer", node.ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, exist := s.connectors[node.ID]
 	if !exist {
+		s.logger.Debugw("adding dialer for a peer", "peer", node.ID)
 		ctx, cancel := context.WithCancel(s.ctx)
 		d := &connector{
 			ctx:         ctx,
@@ -108,13 +108,13 @@ func (s *server) Add(node *Node) {
 
 // Remove persistent connector to a node. It doesn't close existing connections.
 func (s *server) Remove(id NodeID) {
-	s.logger.Debugw("removing dialer for a peer", "peer", id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, exist := s.connectors[id]
 	if !exist {
 		return
 	}
+	s.logger.Debugw("removing dialer for a peer", "peer", id)
 	delete(s.connectors, id)
 	c.close()
 }

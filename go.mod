@@ -7,6 +7,7 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/tysonmote/gommap v0.0.0-20201017170033-6edfc905bae0
 	go.uber.org/zap v1.16.0
+	golang.org/x/sync v0.0.0-20201207232520-09787c993a3a
 	pgregory.net/rapid v0.4.4
 )
 

@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 
 	"github.com/dshulyak/raft/types"
@@ -20,7 +21,11 @@ func newAppStateMachine(global *Context) *appStateMachine {
 		appliedC: make(chan uint64),
 		updatesC: make(chan *appUpdate),
 	}
-	go sm.run()
+	go func() {
+		if err := sm.run(); err != nil && !errors.Is(err, context.Canceled) {
+			sm.logger.Panicw("application state machine crashed", "error", err)
+		}
+	}()
 	return sm
 }
 

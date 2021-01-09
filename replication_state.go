@@ -91,6 +91,7 @@ func (p *replicationState) sendHeartbeat() *AppendEntries {
 
 // next selects next in-order batch of entries to append or heartbeat if logs are up to date.
 func (p *replicationState) next() *AppendEntries {
+	p.logger.Debugw("get last entry in the log")
 	last := p.lastLog()
 	if p.sentLog.Index >= last.Index {
 		if p.heartbeat <= 0 {
@@ -111,6 +112,7 @@ func (p *replicationState) next() *AppendEntries {
 	)
 
 	for i := 0; i < int(d); i++ {
+		p.logger.Debugw("replication channel: get log entry", "index", nextIndex)
 		entry, err := p.log.Get(nextIndex - 1)
 		if err != nil {
 			p.logger.Panicw("failed to get entry", "index", nextIndex, "error", err)

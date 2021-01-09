@@ -110,12 +110,12 @@ func (p *streamHandler) handle(stream MsgStream) {
 	errc := make(chan error, 2)
 	go func() {
 		err := p.reader(stream)
-		p.logger.Debugw("reader stream was closed", "peer", stream.ID(), "error", err)
+		p.logger.Debugw("reader finished", "peer", stream.ID(), "error", err)
 		errc <- err
 	}()
 	go func() {
 		err := p.writer(stream)
-		p.logger.Debugw("writer stream was closed", "peer", stream.ID(), "error", err)
+		p.logger.Debugw("writer finished", "peer", stream.ID(), "error", err)
 		errc <- err
 	}()
 

@@ -51,10 +51,10 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		EntriesPerAppend:       1,
 		ProposalsBuffer:        10,
 		PendingProposalsBuffer: 10,
-		TickInterval:           100 * time.Millisecond,
-		HeartbeatTimeout:       5,
-		ElectionTimeoutMin:     20,
-		ElectionTimeoutMax:     40,
+		TickInterval:           20 * time.Millisecond,
+		HeartbeatTimeout:       3,
+		ElectionTimeoutMin:     10,
+		ElectionTimeoutMax:     20,
 		Configuration:          &Configuration{},
 	}
 
@@ -118,11 +118,13 @@ func (c *nodeCluster) propose(ctx context.Context, op []byte) {
 	}
 }
 
-func TestNodeProposal(t *testing.T) {
+func TestNodeProposalsSequential(t *testing.T) {
 	c := newNodeCluster(t, 3)
-	op, err := c.encoder.Insert(10, nil)
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c.propose(ctx, op)
+	for i := 1; i <= 100; i++ {
+		op, err := c.encoder.Insert(uint64(i), nil)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.propose(ctx, op)
+	}
 }

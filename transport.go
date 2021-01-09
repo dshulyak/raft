@@ -97,11 +97,11 @@ type peerMailbox struct {
 }
 
 func (m *peerMailbox) Update(global *Context, state RaftState) {
+	if state == 0 || m.state == state {
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// mailbox type changes only on transitions:
-	// from candidate to leader - 1st type
-	// from leader or empty to not leader  - 2nd type
 	toLeader := m.state == RaftCandidate && state == RaftLeader
 	toNotLeader := (m.state == RaftLeader || m.state == 0) || state != RaftLeader
 	if !(toLeader || toNotLeader) {
@@ -111,6 +111,8 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 		m.current.Close()
 	}
 	logger := global.Logger.Sugar()
+	logger.Debugw("update peer mailbox type", "to leader", toLeader, "not leader", toNotLeader, "current", m.state, "next", state)
+	m.state = state
 	if toLeader {
 		m.current = newReplicationChannel(
 			global,

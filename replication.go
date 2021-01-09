@@ -18,6 +18,7 @@ func newReplicationChannel(parent context.Context,
 	pr := &replicationChannel{
 		ctx:    ctx,
 		cancel: cancel,
+		logger: logger,
 		tick:   tick,
 		out:    out,
 		in:     make(chan Message, 1),
@@ -25,7 +26,13 @@ func newReplicationChannel(parent context.Context,
 	}
 	// FIXME send error from run to some error handler
 	// if run exits with error application must shutdown
-	go pr.run()
+	go func() {
+		if err := pr.run(); err != nil {
+			pr.logger.Errorw("replication channel crashed", "error", err)
+			panic("replication channel crashed")
+		}
+	}()
+
 	return pr
 }
 
@@ -55,6 +62,7 @@ func (r *replicationChannel) Close() {
 }
 
 func (r *replicationChannel) run() (err error) {
+	r.logger.Debugw("started replication channel")
 	defer func() {
 		// disk IO error will panic
 		rec := recover()
