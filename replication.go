@@ -97,6 +97,9 @@ func (r *replicationChannel) run() (err error) {
 				next = r.peer.update(next, m)
 			}
 		case out <- next:
+			if len(next.Entries) == 0 {
+				r.logger.Debugw("sent heartbeat", "term", next.Term)
+			}
 			next = r.peer.next()
 		}
 	}

@@ -60,7 +60,7 @@ func (a *appStateMachine) run() error {
 		case applied <- learned:
 			applied = nil
 		case update := <-a.updatesC:
-			a.logger.Debugw("app received update", "commit", update.Commit)
+			a.logger.Debugw("app received update", "commit", update.Commit, "proposals", len(update.Proposals))
 			if err := a.onUpdate(update); err != nil {
 				a.logger.Debugw("app state macine closed with error", "error", err)
 				return err
@@ -80,7 +80,7 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 		entry    *raftlog.LogEntry
 		proposal *Proposal
 	)
-	if recent > 0 {
+	if len(u.Proposals) > 0 {
 		recent = u.Proposals[0].Entry.Index
 	}
 	for a.lastApplied < u.Commit {
@@ -88,7 +88,7 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 			return context.Canceled
 		}
 		next := a.lastApplied + 1
-		if recent != 0 && next >= recent {
+		if recent > 0 && next >= recent {
 			proposal = u.Proposals[next-recent]
 			entry = proposal.Entry
 		} else {
@@ -101,8 +101,6 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 		if entry.OpType == raftlog.LogApplication {
 			a.logger.Debugw("applying entry", "index", entry.Index, "term", entry.Term, "proposed", proposal != nil)
 			a.app.Apply(entry, proposal)
-		} else {
-
 		}
 		a.lastApplied = next
 	}

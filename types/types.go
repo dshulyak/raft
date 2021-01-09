@@ -104,8 +104,8 @@ func (p *Proposal) Wait(ctx context.Context) error {
 		panic("proposal is not fully initialized")
 	}
 	select {
-	case <-p.ctx.Done():
-		return p.ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case err := <-p.result:
 		return err
 	case <-p.ctx.Done():

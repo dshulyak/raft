@@ -136,12 +136,15 @@ func (n *node) sendMessages(u *Update) {
 func (n *node) manageConnections(conf *Configuration, u *Update) {
 	if u.State == RaftCandidate {
 		for i := range conf.Nodes {
-			n.server.Add(&conf.Nodes[i])
+			if conf.Nodes[i].ID != n.global.ID {
+				n.server.Add(&conf.Nodes[i])
+			}
 		}
-
-	} else if u.State != 0 {
+	} else if u.State == RaftFollower {
 		for i := range conf.Nodes {
-			n.server.Remove(conf.Nodes[i].ID)
+			if conf.Nodes[i].ID != n.global.ID {
+				n.server.Remove(conf.Nodes[i].ID)
+			}
 		}
 	}
 }

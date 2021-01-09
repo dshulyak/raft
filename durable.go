@@ -42,8 +42,8 @@ func NewDurableState(f *os.File) (*DurableState, error) {
 }
 
 type DurableState struct {
-	term     uint64
-	votedFor NodeID
+	Term     uint64
+	VotedFor NodeID
 
 	// serialize to buf first and copy to mmap to avoid incomplete writes
 	buf [stateWidth]byte
@@ -53,8 +53,8 @@ type DurableState struct {
 
 func (ds *DurableState) Sync() error {
 	buf := ds.buf[:]
-	binary.LittleEndian.PutUint64(buf[crcWidth:], ds.term)
-	binary.LittleEndian.PutUint64(buf[crcWidth+termWidth:], uint64(ds.votedFor))
+	binary.LittleEndian.PutUint64(buf[crcWidth:], ds.Term)
+	binary.LittleEndian.PutUint64(buf[crcWidth+termWidth:], uint64(ds.VotedFor))
 	code := crc32.Update(0, table, buf[crcWidth:])
 	binary.LittleEndian.PutUint32(buf, code)
 	_ = copy(ds.mmap, buf)
@@ -72,8 +72,8 @@ func (ds *DurableState) Load() error {
 	if code != crc32.Update(0, table, buf[crcWidth:]) {
 		return ErrStateCorrupted
 	}
-	ds.term = binary.LittleEndian.Uint64(buf[crcWidth:])
-	ds.votedFor = NodeID(binary.LittleEndian.Uint64(buf[crcWidth+termWidth:]))
+	ds.Term = binary.LittleEndian.Uint64(buf[crcWidth:])
+	ds.VotedFor = NodeID(binary.LittleEndian.Uint64(buf[crcWidth+termWidth:]))
 	return nil
 }
 

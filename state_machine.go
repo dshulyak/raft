@@ -106,7 +106,7 @@ func (s *state) commit(u *Update, commited uint64) {
 	if commited <= s.commitIndex {
 		return
 	}
-	s.logger.Debugw("entry commited", "index", commited, "term", s.term)
+	s.logger.Debugw("entry commited", "index", commited, "term", s.Term)
 	s.commitIndex = commited
 	u.Commit = commited
 	u.Updated = true
@@ -152,7 +152,7 @@ func (s *state) send(u *Update, msg interface{}, to ...NodeID) {
 
 func (s *state) resetTicks() {
 	// TODO allow to set custom rand function?
-	s.election = rand.Intn(s.minElection+s.maxElection) - s.minElection
+	s.election = rand.Intn(s.maxElection) + s.minElection
 }
 
 type role interface {
@@ -235,9 +235,9 @@ func (s *stateMachine) Update() *Update {
 func toFollower(s *state, term uint64, u *Update) *follower {
 	s.resetTicks()
 	s.leader = None
-	if term > s.term {
-		s.term = term
-		s.votedFor = None
+	if term > s.Term {
+		s.Term = term
+		s.VotedFor = None
 		s.must(s.Sync(), "failed to sync durable state")
 	}
 	u.State = RaftFollower
@@ -251,6 +251,7 @@ type follower struct {
 }
 
 func (f *follower) tick(n int, u *Update) role {
+	f.logger.Debugw("election ticker reduced", "election", f.election, "ticks", n)
 	f.election -= n
 	if f.election <= 0 {
 		f.logger.Debugw("election timeout elapsed. transitioning to candidate",
@@ -280,15 +281,15 @@ func (f *follower) next(msg interface{}, u *Update) role {
 }
 
 func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
-	if f.term > msg.Term {
+	if f.Term > msg.Term {
 		f.send(u, &AppendEntriesResponse{
-			Term:     f.term,
+			Term:     f.Term,
 			Follower: f.id,
 		}, msg.Leader)
 		return nil
-	} else if f.term < msg.Term {
-		f.term = msg.Term
-		f.votedFor = None
+	} else if f.Term < msg.Term {
+		f.Term = msg.Term
+		f.VotedFor = None
 		f.must(f.Sync(), "failed to sync durable state")
 	}
 	if f.leader == None {
@@ -307,7 +308,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	empty := f.log.IsEmpty()
 	if empty && msg.PrevLog.Index > 0 {
 		f.send(u, &AppendEntriesResponse{
-			Term:     f.term,
+			Term:     f.Term,
 			Follower: f.id,
 		}, msg.Leader)
 		return nil
@@ -319,7 +320,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		entry, err := f.log.Get(int(msg.PrevLog.Index) - 1)
 		if errors.Is(err, raftlog.ErrEntryNotFound) {
 			f.send(u, &AppendEntriesResponse{
-				Term:     f.term,
+				Term:     f.Term,
 				Follower: f.id,
 			}, msg.Leader)
 			return nil
@@ -334,7 +335,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			)
 			f.must(f.log.DeleteFrom(int(msg.PrevLog.Index)-1), "failed to delete a log")
 			f.send(u, &AppendEntriesResponse{
-				Term:     f.term,
+				Term:     f.Term,
 				Follower: f.id,
 			}, msg.Leader)
 			return nil
@@ -343,7 +344,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	if len(msg.Entries) == 0 {
 		f.logger.Debugw("received a heartbeat", "leader", msg.Leader)
 		f.send(u, &AppendEntriesResponse{
-			Term:     f.term,
+			Term:     f.Term,
 			Follower: f.id,
 			Success:  true,
 		}, msg.Leader)
@@ -367,7 +368,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	f.must(f.log.Sync(), "failed to persist the log on disk")
 	f.commit(u, min(msg.Commited, last.Index))
 	resp := &AppendEntriesResponse{
-		Term:     f.term,
+		Term:     f.Term,
 		Follower: f.id,
 		Success:  true,
 	}
@@ -386,18 +387,18 @@ func min(i, j uint64) uint64 {
 
 func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	var grant bool
-	if msg.Term < f.term {
+	if msg.Term < f.Term {
 		grant = false
-	} else if msg.Term == f.term && f.votedFor != None {
+	} else if msg.Term == f.Term && f.VotedFor != None {
 		// this is kind of an optimization to allow faster recovery
 		// if candidate crashed (connection timed out) before persisting new term.
 		// can be removed to simplify things a bit.
-		grant = f.votedFor == msg.Candidate
+		grant = f.VotedFor == msg.Candidate
 	} else {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
 		if grant {
-			f.votedFor = msg.Candidate
-			f.term = msg.Term
+			f.VotedFor = msg.Candidate
+			f.Term = msg.Term
 			f.must(f.Sync(), "failed to sync durable state")
 		}
 	}
@@ -413,7 +414,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		"last log term", msg.LastLog.Term,
 	)
 	f.send(u, &RequestVoteResponse{
-		Term:        f.term,
+		Term:        f.Term,
 		Voter:       f.id,
 		VoteGranted: grant,
 	}, msg.Candidate)
@@ -422,8 +423,8 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 
 func toCandidate(s *state, u *Update) *candidate {
 	s.resetTicks()
-	s.term++
-	s.votedFor = s.id
+	s.Term++
+	s.VotedFor = s.id
 	s.must(s.Sync(), "failed to sync durable state")
 
 	c := candidate{state: s, votes: map[NodeID]struct{}{
@@ -438,12 +439,12 @@ func toCandidate(s *state, u *Update) *candidate {
 	}
 
 	request := &RequestVote{
-		Term:      s.term,
+		Term:      s.Term,
 		Candidate: s.id,
 	}
 	request.LastLog.Term = last.Term
 	request.LastLog.Index = last.Index
-	s.logger.Debugw("starting an election campaign", "candidate", s.id, "term", s.term)
+	s.logger.Debugw("starting an election campaign", "candidate", s.id, "term", s.Term)
 	s.send(u, request)
 	u.State = RaftCandidate
 	u.Updated = true
@@ -469,27 +470,27 @@ func (c *candidate) tick(n int, u *Update) role {
 func (c *candidate) next(msg interface{}, u *Update) role {
 	switch m := msg.(type) {
 	case *RequestVote:
-		if m.Term > c.term {
+		if m.Term > c.Term {
 			return toFollower(c.state, m.Term, u)
 		}
 		c.send(u, &RequestVoteResponse{
 			Voter: c.id,
-			Term:  c.term,
+			Term:  c.Term,
 		}, m.Candidate)
 	case *AppendEntries:
 		// leader might have been elected in the same term as the candidate
-		if m.Term >= c.term {
+		if m.Term >= c.Term {
 			return toFollower(c.state, m.Term, u)
 		}
 		c.send(u, &AppendEntriesResponse{
 			Follower: c.id,
-			Term:     c.term,
+			Term:     c.Term,
 		}, m.Leader)
 	case *RequestVoteResponse:
-		if m.Term < c.term {
+		if m.Term < c.Term {
 			return nil
 		}
-		if m.Term > c.term {
+		if m.Term > c.Term {
 			return toFollower(c.state, m.Term, u)
 		}
 		if !m.VoteGranted {
@@ -508,7 +509,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 }
 
 func toLeader(s *state, u *Update) *leader {
-	s.logger.Debugw("leader is elected", "id", s.id, "term", s.term)
+	s.logger.Debugw("leader is elected", "id", s.id, "term", s.Term)
 	l := leader{state: s, matchIndex: map[NodeID]uint64{}, inflight: list.New()}
 	last, err := s.log.Last()
 	if errors.Is(err, raftlog.ErrEmptyLog) {
@@ -540,7 +541,7 @@ type leader struct {
 
 func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 	msg := &AppendEntries{
-		Term:     l.term,
+		Term:     l.Term,
 		Leader:   l.id,
 		Commited: l.commitIndex,
 		Entries:  make([]*raftlog.LogEntry, len(proposals)),
@@ -550,7 +551,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 	for i := range msg.Entries {
 		msg.Entries[i] = proposals[i].Entry
 		msg.Entries[i].Index = l.nextLogIndex
-		msg.Entries[i].Term = l.term
+		msg.Entries[i].Term = l.Term
 		l.nextLogIndex++
 		l.logger.Debugw("append entry on a leader",
 			"index", msg.Entries[i].Index, "term", msg.Entries[i].Term)
@@ -559,7 +560,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 	}
 	if len(msg.Entries) > 0 {
 		l.prevLog.Index = msg.Entries[len(msg.Entries)-1].Index
-		l.prevLog.Term = l.term
+		l.prevLog.Term = l.Term
 	}
 	l.send(u, msg)
 }
@@ -601,30 +602,30 @@ func (l *leader) commitInflight(u *Update, idx uint64) {
 func (l *leader) next(msg interface{}, u *Update) role {
 	switch m := msg.(type) {
 	case *RequestVote:
-		if m.Term > l.term {
+		if m.Term > l.Term {
 			return l.stepdown(m.Term, u)
 		}
 		l.send(u, &RequestVoteResponse{
 			Voter: l.id,
-			Term:  l.term,
+			Term:  l.Term,
 		}, m.Candidate)
 	case *AppendEntries:
-		if m.Term > l.term {
+		if m.Term > l.Term {
 			return l.stepdown(m.Term, u)
 		}
 		l.send(u, &AppendEntriesResponse{
 			Follower: l.id,
-			Term:     l.term,
+			Term:     l.Term,
 		}, m.Leader)
 	case *RequestVoteResponse:
-		if m.Term > l.term {
+		if m.Term > l.Term {
 			return l.stepdown(m.Term, u)
 		}
 	case *AppendEntriesResponse:
-		if m.Term < l.term {
+		if m.Term < l.Term {
 			return nil
 		}
-		if m.Term > l.term {
+		if m.Term > l.Term {
 			return l.stepdown(m.Term, u)
 		}
 		return l.onAppendEntriesResponse(m, u)
@@ -674,7 +675,7 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	// first valid index starts with 1.
 	entry, err := l.log.Get(int(idx) - 1)
 	l.must(err, "failed to get entry")
-	if entry.Term != l.term {
+	if entry.Term != l.Term {
 		return nil
 	}
 	l.must(l.log.Sync(), "failed to sync the log")
