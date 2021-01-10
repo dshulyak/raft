@@ -103,29 +103,27 @@ func (p *streamHandler) handle(stream MsgStream) {
 	}
 	defer p.unregisterConnection(stream.ID())
 
+	var wg sync.WaitGroup
+	wg.Add(2)
 	errc := make(chan error, 2)
 	go func() {
 		err := p.reader(stream)
 		p.logger.Debugw("reader finished", "peer", stream.ID(), "error", err)
 		errc <- err
+		wg.Done()
 	}()
 	go func() {
 		err := p.writer(stream)
 		p.logger.Debugw("writer finished", "peer", stream.ID(), "error", err)
 		errc <- err
+		wg.Done()
 	}()
 
-	n := 0
 	for err := range errc {
 		if err != nil && !errors.Is(err, io.EOF) {
 			stream.Close()
-			return
-		}
-		n++
-		if n == 2 {
-			stream.Close()
-			return
+			break
 		}
 	}
-	panic("unreachable!")
+	wg.Wait()
 }

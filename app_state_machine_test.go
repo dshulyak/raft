@@ -105,8 +105,8 @@ func TestApplyLogs(t *testing.T) {
 		App:     app,
 		Logger:  logger,
 	}
-	group, _ := errgroup.WithContext(global)
-	appSM := newAppStateMachine(global, group)
+	group, ctx := errgroup.WithContext(global)
+	appSM := newAppStateMachine(ctx, global, group)
 	t.Cleanup(func() {
 		appSM.close()
 	})

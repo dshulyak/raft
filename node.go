@@ -84,7 +84,7 @@ func newNode(global *Context) *node {
 		global.Storage,
 		global.State,
 	)
-	n.app = newAppStateMachine(global, n.group)
+	n.app = newAppStateMachine(ctx, global, n.group)
 	n.streams = newStreamHandler(ctx, global.Logger, n.msgPipeline)
 	n.server = newServer(global, n.streams.handle)
 	n.group.Go(n.run)
@@ -139,6 +139,7 @@ func (n *node) sendMessages(u *Update) {
 		box, exist := n.mailboxes[msg.To]
 		if !exist {
 			box = &peerMailbox{
+				ctx:   n.ctx,
 				group: n.group,
 				mail:  n.streams.getSender(msg.To),
 			}
@@ -199,6 +200,7 @@ func (n *node) Push(msg Message) error {
 }
 
 func (n *node) run() (err error) {
+	defer n.logger.Debugw("node exited", "error", err)
 	var (
 		// node shouldn't consume from buffer until the leader is known
 		proposals        = make(chan []*Proposal)
@@ -273,5 +275,5 @@ func (n *node) Close() {
 }
 
 func (n *node) Wait() error {
-	return nil
+	return <-n.closeC
 }

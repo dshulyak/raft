@@ -10,8 +10,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func newAppStateMachine(global *Context, group *errgroup.Group) *appStateMachine {
-	ctx, cancel := context.WithCancel(global.Context)
+func newAppStateMachine(ctx context.Context, global *Context, group *errgroup.Group) *appStateMachine {
+	ctx, cancel := context.WithCancel(ctx)
 	sm := &appStateMachine{
 		ctx:      ctx,
 		cancel:   cancel,
@@ -49,7 +49,8 @@ func (a *appStateMachine) applied() <-chan uint64 {
 	return a.appliedC
 }
 
-func (a *appStateMachine) run() error {
+func (a *appStateMachine) run() (err error) {
+	defer a.logger.Debugw("app exited", "error", err)
 	var (
 		learned uint64
 		applied chan uint64
@@ -57,14 +58,14 @@ func (a *appStateMachine) run() error {
 	for {
 		select {
 		case <-a.ctx.Done():
-			return a.ctx.Err()
+			err = a.ctx.Err()
+			return
 		case applied <- learned:
 			applied = nil
 		case update := <-a.updatesC:
 			a.logger.Debugw("app received update", "commit", update.Commit, "proposals", len(update.Proposals))
-			if err := a.onUpdate(update); err != nil {
-				a.logger.Debugw("app state macine closed with error", "error", err)
-				return err
+			if err = a.onUpdate(update); err != nil {
+				return
 			}
 			a.logger.Debugw("app processed update", "commit", update.Commit)
 			if a.lastApplied != learned {

@@ -90,6 +90,7 @@ type peerDeliveryChannel interface {
 //   and delivers it once the stream is opened/restored
 // in both cases peerMailbox is a non-blocking layer before the network
 type peerMailbox struct {
+	ctx     context.Context
 	group   *errgroup.Group
 	mu      sync.Mutex
 	state   RaftState
@@ -116,7 +117,7 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 	m.state = state
 	if toLeader {
 		m.current = newReplicationChannel(
-			global,
+			m.ctx,
 			logger,
 			global.TickInterval,
 			m.mail,
@@ -130,7 +131,7 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 		m.group.Go(m.current.Run)
 		return
 	}
-	m.current = newLastMessageSender(global, logger, m.mail)
+	m.current = newLastMessageSender(m.ctx, logger, m.mail)
 	m.group.Go(m.current.Run)
 }
 

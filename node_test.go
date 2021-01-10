@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,7 +22,7 @@ type nodeCluster struct {
 	nodes map[NodeID]*node
 	apps  map[NodeID]*keyValueApp
 
-	lastLeader NodeID
+	lastLeader uint64
 
 	encoder keyValueOpEncoder
 
@@ -97,27 +99,27 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	return nc
 }
 
-func (c *nodeCluster) propose(ctx context.Context, op []byte) {
-	if c.lastLeader == None {
+func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
+	if NodeID(atomic.LoadUint64(&c.lastLeader)) == None {
 		// or choose randomly
-		c.lastLeader = NodeID(1)
+		atomic.StoreUint64(&c.lastLeader, 1)
 	}
 	for {
-		n := c.nodes[c.lastLeader]
+		n := c.nodes[NodeID(atomic.LoadUint64(&c.lastLeader))]
 		proposal, err := n.Propose(ctx, op)
 		require.NoError(c.t, err)
 		err = proposal.Wait(ctx)
 		if err == nil {
-			return
+			return nil
 		}
 		redirect := &ErrRedirect{}
 		if errors.As(err, &redirect) {
-			c.lastLeader = redirect.Leader.ID
-			continue
+			atomic.StoreUint64(&c.lastLeader, uint64(redirect.Leader.ID))
 		} else if errors.Is(err, ErrLeaderStepdown) {
-			continue
+		} else if errors.Is(err, ErrProposalsOverflow) {
+			time.Sleep(time.Second)
 		} else {
-			require.NoError(c.t, err)
+			return err
 		}
 
 	}
@@ -130,6 +132,25 @@ func TestNodeProposalsSequential(t *testing.T) {
 		require.NoError(t, err)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		c.propose(ctx, op)
+		require.NoError(t, c.propose(ctx, op), i)
 	}
+}
+
+func TestNodeProposalsConcurrent(t *testing.T) {
+	c := newNodeCluster(t, 3)
+	var wg sync.WaitGroup
+
+	for i := 1; i <= 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			op, err := c.encoder.Insert(uint64(i), nil)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, c.propose(ctx, op), i)
+		}(i)
+	}
+	wg.Wait()
+
 }

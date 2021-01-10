@@ -589,14 +589,18 @@ func (l *leader) stepdown(term uint64, u *Update) *follower {
 }
 
 func (l *leader) commitInflight(u *Update, idx uint64) {
-	for front := l.inflight.Front(); front != nil; front = front.Next() {
+	l.logger.Debugw("commiting proposals on a leader",
+		"commit", idx, "proposals count", l.inflight.Len())
+	for front := l.inflight.Front(); front != nil; {
 		proposal := front.Value.(*Proposal)
 		if proposal.Entry.Index > idx {
-			break
+			return
 		} else {
 			u.Updated = true
 			u.Proposals = append(u.Proposals, proposal)
-			l.inflight.Remove(front)
+			prev := front
+			front = front.Next()
+			l.inflight.Remove(prev)
 		}
 	}
 }
