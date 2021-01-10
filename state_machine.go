@@ -344,31 +344,24 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			return nil
 		}
 	}
-	if len(msg.Entries) == 0 {
-		f.send(u, &AppendEntriesResponse{
-			Term:     f.Term,
-			Follower: f.id,
-			Success:  true,
-		}, msg.Leader)
-		return nil
-	}
 
 	var last *raftlog.LogEntry
 	for i := range msg.Entries {
 		last = msg.Entries[i]
 		f.must(f.log.Append(last), "failed to append log")
 	}
-	f.logger.Debugw("last appended entry",
-		"index", last.Index,
-		"term", last.Term,
-	)
-	// TODO as an optimization we don't need to fsync in state machine
-	// we only need to fsync before replying to the leader or before sending
-	// logs to the Application
-	// fsync as late as possible will allow to batch multiple writes into
-	// single write syscall, followed by a single fsync
-	f.must(f.log.Sync(), "failed to persist the log on disk")
-	f.commit(u, min(msg.Commited, last.Index))
+	if len(msg.Entries) == 0 {
+		entry, err := f.log.Last()
+		f.must(err, "error loading last log entry")
+		last = &entry
+	} else {
+		f.logger.Debugw("last appended entry",
+			"index", last.Index,
+			"term", last.Term,
+		)
+		f.must(f.log.Sync(), "failed to persist the log on disk")
+		f.commit(u, min(msg.Commited, last.Index))
+	}
 	resp := &AppendEntriesResponse{
 		Term:     f.Term,
 		Follower: f.id,
@@ -645,13 +638,10 @@ func (l *leader) next(msg interface{}, u *Update) role {
 
 func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) role {
 	if !m.Success {
-		// peer replication component will take care of conflicts
+		// peer replication channel will take care of conflicts
 		return nil
 	}
-	if m.LastLog.Term == 0 {
-		// do nothing. this a response for the heartbeat
-		return nil
-	}
+	l.logger.Debugw("leader received response", "msg", m)
 	current := l.matchIndex[m.Follower]
 	if current >= m.LastLog.Index {
 		return nil

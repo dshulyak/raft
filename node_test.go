@@ -130,9 +130,9 @@ func TestNodeProposalsSequential(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		op, err := c.encoder.Insert(uint64(i), nil)
 		require.NoError(t, err)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		require.NoError(t, c.propose(ctx, op), i)
+		require.NoError(t, c.propose(ctx, op))
 	}
 }
 
@@ -148,7 +148,7 @@ func TestNodeProposalsConcurrent(t *testing.T) {
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			require.NoError(t, c.propose(ctx, op), i)
+			require.NoError(t, c.propose(ctx, op))
 		}(i)
 	}
 	wg.Wait()

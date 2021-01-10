@@ -68,7 +68,7 @@ func (s *lastMessageChannel) Run() (err error) {
 			return
 		case next := <-s.in:
 			if msg != nil {
-				// FIXME log that message is dropped
+				s.logger.Debugw("message is dropped", "body", msg)
 			}
 			msg = next
 		case out <- msg:
