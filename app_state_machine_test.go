@@ -12,6 +12,7 @@ import (
 	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -104,7 +105,8 @@ func TestApplyLogs(t *testing.T) {
 		App:     app,
 		Logger:  logger,
 	}
-	appSM := newAppStateMachine(global)
+	group, _ := errgroup.WithContext(global)
+	appSM := newAppStateMachine(global, group)
 	t.Cleanup(func() {
 		appSM.close()
 	})

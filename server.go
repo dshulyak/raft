@@ -167,7 +167,7 @@ func (s *server) closeConnectors() {
 func (s *server) Close() error {
 	s.cancel()
 	s.closeConnectors()
-	return s.tr.Close()
+	return nil
 }
 
 type connector struct {

@@ -9,6 +9,7 @@ import (
 	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -60,11 +61,14 @@ type appUpdate struct {
 
 func newNode(global *Context) *node {
 	ctx, cancel := context.WithCancel(global)
+	group, ctx := errgroup.WithContext(ctx)
 	n := &node{
 		global:       global,
 		logger:       global.Logger.Sugar(),
 		ctx:          ctx,
 		cancel:       cancel,
+		group:        group,
+		closeC:       make(chan error, 1),
 		tick:         global.TickInterval,
 		maxProposals: global.ProposalsBuffer,
 		mailboxes:    map[NodeID]*peerMailbox{},
@@ -80,24 +84,30 @@ func newNode(global *Context) *node {
 		global.Storage,
 		global.State,
 	)
-	n.app = newAppStateMachine(global)
+	n.app = newAppStateMachine(global, n.group)
 	n.streams = newStreamHandler(global.Logger, n.msgPipeline)
 	n.server = newServer(global, n.streams.handle)
-	// FIXME report error from run up the stack
+	n.group.Go(n.run)
 	go func() {
-		if err := n.run(); err != nil {
-			n.logger.Errorw("raft node crashed", "error", err)
-			panic("raft node crashed")
+		<-ctx.Done()
+		err := n.group.Wait()
+		if errors.Is(err, context.Canceled) {
+			err = nil
 		}
+		n.closeC <- err
 	}()
 	return n
 }
 
 type node struct {
-	global       *Context
-	logger       *zap.SugaredLogger
-	ctx          context.Context
-	cancel       func()
+	global *Context
+	logger *zap.SugaredLogger
+
+	ctx    context.Context
+	cancel func()
+	group  *errgroup.Group
+	closeC chan error
+
 	tick         time.Duration
 	maxProposals int
 
@@ -129,7 +139,8 @@ func (n *node) sendMessages(u *Update) {
 		box, exist := n.mailboxes[msg.To]
 		if !exist {
 			box = &peerMailbox{
-				mail: n.streams.getSender(msg.To),
+				group: n.group,
+				mail:  n.streams.getSender(msg.To),
 			}
 			n.mailboxes[msg.To] = box
 		}
@@ -225,7 +236,7 @@ func (n *node) run() (err error) {
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				n.logger.Errorw("node will be terminated", "error", err)
-				n.Stop()
+				n.Close()
 			}
 			return err
 		}
@@ -256,8 +267,12 @@ func (n *node) run() (err error) {
 	}
 }
 
-func (n *node) Stop() {
+func (n *node) Close() {
 	n.cancel()
 	n.server.Close()
 	n.streams.close()
+}
+
+func (n *node) Wait() error {
+	return nil
 }

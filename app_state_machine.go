@@ -2,15 +2,15 @@ package raft
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 
 	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
-func newAppStateMachine(global *Context) *appStateMachine {
+func newAppStateMachine(global *Context, group *errgroup.Group) *appStateMachine {
 	ctx, cancel := context.WithCancel(global.Context)
 	sm := &appStateMachine{
 		ctx:      ctx,
@@ -21,11 +21,7 @@ func newAppStateMachine(global *Context) *appStateMachine {
 		appliedC: make(chan uint64),
 		updatesC: make(chan *appUpdate),
 	}
-	go func() {
-		if err := sm.run(); err != nil && !errors.Is(err, context.Canceled) {
-			sm.logger.Panicw("application state machine crashed", "error", err)
-		}
-	}()
+	group.Go(sm.run)
 	return sm
 }
 

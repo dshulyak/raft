@@ -6,6 +6,7 @@ import (
 
 	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type (
@@ -19,15 +20,13 @@ func newLastMessageSender(
 	out chan<- Message,
 ) *lastMessageChannel {
 	ctx, cancel := context.WithCancel(ctx)
-	sender := &lastMessageChannel{
+	return &lastMessageChannel{
 		ctx:    ctx,
 		cancel: cancel,
 		logger: logger,
 		out:    out,
 		in:     make(chan Message, 1),
 	}
-	go sender.run()
-	return sender
 }
 
 // lastMessageChannel buffers last message, dropping all previous messages.
@@ -53,7 +52,7 @@ func (s *lastMessageChannel) Close() {
 	s.cancel()
 }
 
-func (s *lastMessageChannel) run() {
+func (s *lastMessageChannel) Run() (err error) {
 	var (
 		msg Message
 		out chan<- Message
@@ -81,6 +80,7 @@ func (s *lastMessageChannel) run() {
 type peerDeliveryChannel interface {
 	Send(Message)
 	Close()
+	Run() error
 }
 
 // peerMailbox can be in one of two states:
@@ -90,6 +90,7 @@ type peerDeliveryChannel interface {
 //   and delivers it once the stream is opened/restored
 // in both cases peerMailbox is a non-blocking layer before the network
 type peerMailbox struct {
+	group   *errgroup.Group
 	mu      sync.Mutex
 	state   RaftState
 	mail    chan<- Message
@@ -126,9 +127,10 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 				global.Storage,
 			),
 		)
-		return
+	} else {
+		m.current = newLastMessageSender(global, logger, m.mail)
 	}
-	m.current = newLastMessageSender(global, logger, m.mail)
+	m.group.Go(m.current.Run)
 }
 
 func (m *peerMailbox) Response(msg Message) {

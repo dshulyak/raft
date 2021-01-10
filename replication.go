@@ -15,7 +15,7 @@ func newReplicationChannel(parent context.Context,
 	peer *replicationState,
 ) *replicationChannel {
 	ctx, cancel := context.WithCancel(parent)
-	pr := &replicationChannel{
+	return &replicationChannel{
 		ctx:    ctx,
 		cancel: cancel,
 		logger: logger,
@@ -24,16 +24,6 @@ func newReplicationChannel(parent context.Context,
 		in:     make(chan Message, 1),
 		peer:   peer,
 	}
-	// FIXME send error from run to some error handler
-	// if run exits with error application must shutdown
-	go func() {
-		if err := pr.run(); err != nil {
-			pr.logger.Errorw("replication channel crashed", "error", err)
-			panic("replication channel crashed")
-		}
-	}()
-
-	return pr
 }
 
 type replicationChannel struct {
@@ -61,7 +51,7 @@ func (r *replicationChannel) Close() {
 	r.cancel()
 }
 
-func (r *replicationChannel) run() (err error) {
+func (r *replicationChannel) Run() (err error) {
 	r.logger.Debugw("started replication channel")
 	defer func() {
 		// disk IO error will panic
