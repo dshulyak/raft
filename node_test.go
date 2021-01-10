@@ -127,7 +127,7 @@ func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
 
 func TestNodeProposalsSequential(t *testing.T) {
 	c := newNodeCluster(t, 3)
-	for i := 1; i <= 100; i++ {
+	for i := 1; i <= 10; i++ {
 		op, err := c.encoder.Insert(uint64(i), nil)
 		require.NoError(t, err)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

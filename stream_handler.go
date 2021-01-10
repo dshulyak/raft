@@ -43,6 +43,7 @@ func (p *streamHandler) registerConnection(id NodeID) bool {
 	if exist {
 		return false
 	}
+	p.logger.Debugw("established connection", "peer", id)
 	p.connected[id] = struct{}{}
 	return true
 }
@@ -50,6 +51,11 @@ func (p *streamHandler) registerConnection(id NodeID) bool {
 func (p *streamHandler) unregisterConnection(id NodeID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	_, exist := p.connected[id]
+	if !exist {
+		return
+	}
+	p.logger.Debugw("closed connection", "peer", id)
 	delete(p.connected, id)
 }
 
@@ -93,7 +99,6 @@ func (p *streamHandler) writer(stream MsgStream) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (p *streamHandler) handle(stream MsgStream) {
