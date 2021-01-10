@@ -53,6 +53,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		EntriesPerAppend:       1,
 		ProposalsBuffer:        2,
 		PendingProposalsBuffer: 10,
+		Backoff:                200 * time.Millisecond,
 		TickInterval:           20 * time.Millisecond,
 		HeartbeatTimeout:       3,
 		ElectionTimeoutMin:     10,

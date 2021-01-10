@@ -19,9 +19,9 @@ type Context struct {
 
 	// EntriesPerAppend max number of entries in a single AppendEntries.
 	EntriesPerAppend int
-	// Proposals that buffered by the node before theys are sent to raft.
+	// Proposals that are buffered by the node while state machine is busy.
 	ProposalsBuffer int
-	// Proposals that are waiting for a confirmation from a majority.
+	// Proposals that are waiting for a confirmation from a majority of nodes.
 	PendingProposalsBuffer int
 
 	Storage *raftlog.Storage
@@ -35,7 +35,7 @@ type Context struct {
 	// a dialer.
 	Backoff time.Duration
 
-	// Heartbeat and Election timeouts expressed in TickInterval's.
+	// Heartbeat and Election timeouts are expressed in TickInterval's.
 	TickInterval     time.Duration
 	HeartbeatTimeout int
 
