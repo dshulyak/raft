@@ -10,6 +10,7 @@ import (
 )
 
 type Context struct {
+	// TODO remove context.Context from this object and rename it to Config
 	context.Context
 
 	ID        types.NodeID
@@ -30,8 +31,8 @@ type Context struct {
 
 	// Timeout for dialing to a peer.
 	DialTimeout time.Duration
-	// Backoff will be doubled on every error. If remote peer initiates
-	// a stream backoff is reset to 0.
+	// Backoff after dialer failed. Only a candidate and a leader are running
+	// a dialer.
 	Backoff time.Duration
 
 	// Heartbeat and Election timeouts expressed in TickInterval's.

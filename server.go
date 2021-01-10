@@ -143,16 +143,7 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 			if !owner {
 				return
 			}
-			c1 := s.getConnector(id)
-			if c1 == nil {
-				return
-			}
-			if conn == nil {
-				// need to reset the backoff if peer dialed to us
-				// while this node connector might be in the deep backoff
-				c1.resetBackoff()
-			}
-			conn = c1
+			conn = s.getConnector(id)
 		}
 	}()
 }
@@ -180,8 +171,8 @@ type connector struct {
 	tr          Transport
 	node        *Node
 
-	backoff      time.Duration
-	backoffCount int
+	backoff   time.Duration
+	doBackoff bool
 }
 
 func (d *connector) dial() (MsgStream, error) {
@@ -194,13 +185,9 @@ func (d *connector) dial() (MsgStream, error) {
 	return d.tr.Dial(ctx, d.node)
 }
 
-func (d *connector) resetBackoff() {
-	d.backoff = 0
-}
-
 func (d *connector) dialWithBackoff() (MsgStream, error) {
-	if d.backoffCount > 0 && d.backoff > 0 {
-		timer := time.NewTimer(d.backoff << (d.backoffCount - 1))
+	if d.doBackoff && d.backoff > 0 {
+		timer := time.NewTimer(d.backoff)
 		defer timer.Stop()
 		select {
 		case <-d.ctx.Done():
@@ -210,9 +197,9 @@ func (d *connector) dialWithBackoff() (MsgStream, error) {
 	}
 	stream, err := d.dial()
 	if err != nil {
-		d.backoffCount++
+		d.doBackoff = true
 	} else {
-		d.backoffCount = 0
+		d.doBackoff = false
 	}
 	return stream, err
 }
