@@ -60,6 +60,9 @@ func (r *replicationChannel) Run() (err error) {
 			err = fmt.Errorf("%w: %v", ErrUnexpected, rec)
 			r.cancel()
 		}
+		if err != nil {
+			r.logger.Errorw("replication channel exited", "error", err)
+		}
 	}()
 	var (
 		timeout     = make(chan int)
@@ -89,15 +92,16 @@ func (r *replicationChannel) Run() (err error) {
 				next = r.peer.next()
 			case *AppendEntries:
 				if !initialized {
+					r.logger.Debugw("init", "ptr", m)
 					r.peer.init(m)
 					next = m
+					initialized = true
+				} else {
+					r.logger.Debugw("update", "next", next, "ptr", m)
+					next = r.peer.update(next, m)
 				}
-				next = r.peer.update(next, m)
 			}
 		case out <- next:
-			if len(next.Entries) == 0 {
-				r.logger.Debugw("sent heartbeat", "term", next.Term)
-			}
 			next = r.peer.next()
 		}
 	}

@@ -122,9 +122,9 @@ func (s *server) Remove(id NodeID) {
 func (s *server) accept(id NodeID, stream MsgStream) {
 	go func() {
 		var (
-			connected bool
-			conn      *connector
-			err       error
+			owner bool
+			conn  *connector
+			err   error
 		)
 		for {
 			if conn != nil {
@@ -134,11 +134,13 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 				s.protocol(stream)
 			}
 			if stream != nil {
-				s.removeConnected(id)
+				if owner {
+					s.removeConnected(id)
+				}
 				stream = nil
 			}
-			connected = s.setConnected(id)
-			if !connected {
+			owner = s.setConnected(id)
+			if !owner {
 				return
 			}
 			c1 := s.getConnector(id)

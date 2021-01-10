@@ -85,7 +85,7 @@ func newNode(global *Context) *node {
 		global.State,
 	)
 	n.app = newAppStateMachine(global, n.group)
-	n.streams = newStreamHandler(global.Logger, n.msgPipeline)
+	n.streams = newStreamHandler(ctx, global.Logger, n.msgPipeline)
 	n.server = newServer(global, n.streams.handle)
 	n.group.Go(n.run)
 	go func() {
@@ -270,7 +270,6 @@ func (n *node) run() (err error) {
 func (n *node) Close() {
 	n.cancel()
 	n.server.Close()
-	n.streams.close()
 }
 
 func (n *node) Wait() error {

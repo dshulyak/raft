@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -12,23 +13,25 @@ var ErrConnected = errors.New("already connected")
 
 type msgPipeline func(NodeID, Message)
 
-func newStreamHandler(logger *zap.Logger, push msgPipeline) *streamHandler {
+func newStreamHandler(ctx context.Context, logger *zap.Logger, push msgPipeline) *streamHandler {
 	return &streamHandler{
+		ctx:       ctx,
 		logger:    logger.Sugar(),
 		push:      push,
-		sender:    map[NodeID]chan Message{},
+		messages:  map[NodeID]chan Message{},
 		connected: map[NodeID]struct{}{},
 	}
 }
 
 type streamHandler struct {
+	ctx    context.Context
 	logger *zap.SugaredLogger
 	push   msgPipeline
 
-	mu     sync.Mutex
-	sender map[NodeID]chan Message
+	mu       sync.Mutex
+	messages map[NodeID]chan Message
 	// in current protocol there is no need for more than 1 stream
-	// if two peers will concurrently initiate connections we will end up with more
+	// if two peers will concurrently initiate connections we will end up with more.
 	// if connection already exists in this map abandon it.
 	connected map[NodeID]struct{}
 }
@@ -63,38 +66,31 @@ func (p *streamHandler) reader(stream MsgStream) error {
 func (p *streamHandler) getSender(id NodeID) chan Message {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	sender, exist := p.sender[id]
+	sender, exist := p.messages[id]
 	if !exist {
 		sender = make(chan Message)
-		p.sender[id] = sender
+		p.messages[id] = sender
 	}
 	return sender
 }
 
-func (p *streamHandler) closeSender(id NodeID) {
+func (p *streamHandler) removeSender(id NodeID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	sender, exist := p.sender[id]
-	if !exist {
-		return
-	}
-	close(sender)
-}
-
-func (p *streamHandler) close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, sender := range p.sender {
-		close(sender)
-	}
+	delete(p.messages, id)
 }
 
 func (p *streamHandler) writer(stream MsgStream) error {
 	sender := p.getSender(stream.ID())
-	for msg := range sender {
-		err := stream.Send(msg)
-		if err != nil {
-			return err
+	for {
+		select {
+		case <-p.ctx.Done():
+			return nil
+		case msg := <-sender:
+			err := stream.Send(msg)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

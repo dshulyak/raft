@@ -127,9 +127,10 @@ func (m *peerMailbox) Update(global *Context, state RaftState) {
 				global.Storage,
 			),
 		)
-	} else {
-		m.current = newLastMessageSender(global, logger, m.mail)
+		m.group.Go(m.current.Run)
+		return
 	}
+	m.current = newLastMessageSender(global, logger, m.mail)
 	m.group.Go(m.current.Run)
 }
 

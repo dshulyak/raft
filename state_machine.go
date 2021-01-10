@@ -306,6 +306,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		"replica", f.id,
 		"prev log term", msg.PrevLog.Term,
 		"prev log index", msg.PrevLog.Index,
+		"heartbeat", len(msg.Entries) == 0,
 	)
 	empty := f.log.IsEmpty()
 	if empty && msg.PrevLog.Index > 0 {
@@ -344,7 +345,6 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		}
 	}
 	if len(msg.Entries) == 0 {
-		f.logger.Debugw("received a heartbeat", "leader", msg.Leader)
 		f.send(u, &AppendEntriesResponse{
 			Term:     f.Term,
 			Follower: f.id,
