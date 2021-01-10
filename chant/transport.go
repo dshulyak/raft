@@ -9,6 +9,54 @@ import (
 	"github.com/dshulyak/raft/types"
 )
 
+// Blocked is a graph of connections that are blocked and messages
+// between them should be dropped.
+// Zero value is ready to be used.
+type Blocked struct {
+	mu      sync.RWMutex
+	blocked map[types.NodeID]map[types.NodeID]struct{}
+}
+
+func (b *Blocked) Add(from, to types.NodeID) *Blocked {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.add(from, to)
+	b.add(to, from)
+	return b
+}
+
+func (b *Blocked) add(from, to types.NodeID) {
+	if b.blocked == nil {
+		b.blocked = map[types.NodeID]map[types.NodeID]struct{}{}
+	}
+	r, exist := b.blocked[from]
+	if !exist {
+		r = map[types.NodeID]struct{}{}
+		b.blocked[from] = r
+	}
+	r[to] = struct{}{}
+}
+
+func (b *Blocked) Drop(from, to types.NodeID) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.blocked == nil {
+		return false
+	}
+	r, exist := b.blocked[from]
+	if !exist {
+		return false
+	}
+	_, exist = r[to]
+	return exist
+}
+
+func (b *Blocked) Restore() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blocked = nil
+}
+
 func New() *Network {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Network{
@@ -23,6 +71,16 @@ type Network struct {
 	cancel     func()
 	mu         sync.Mutex
 	transports map[types.NodeID]*Transport
+
+	blocked Blocked
+}
+
+func (n *Network) Block(from, to types.NodeID) {
+	n.blocked.Add(from, to)
+}
+
+func (n *Network) Restore() {
+	n.blocked.Restore()
 }
 
 func (n *Network) Transport(id types.NodeID) *Transport {
@@ -37,6 +95,7 @@ func (n *Network) Transport(id types.NodeID) *Transport {
 			cancel:      cancel,
 			id:          id,
 			connections: map[types.NodeID]*Connection{},
+			blocked:     &n.blocked,
 		}
 		n.transports[id] = tr
 	}
@@ -67,6 +126,8 @@ type Transport struct {
 	cancel  func()
 	id      types.NodeID
 
+	blocked *Blocked
+
 	handler func(types.MsgStream)
 
 	mu          sync.Mutex
@@ -79,6 +140,9 @@ func (t *Transport) Dial(ctx context.Context, n *types.Node) (types.MsgStream, e
 	if n.ID == t.id {
 		return nil, error(syscall.EINVAL)
 	}
+	if t.blocked.Drop(t.id, n.ID) {
+		return nil, error(syscall.EHOSTUNREACH)
+	}
 	conn, exist := t.connections[n.ID]
 	if !exist {
 		ctx, cancel := context.WithCancel(t.ctx)
@@ -86,12 +150,13 @@ func (t *Transport) Dial(ctx context.Context, n *types.Node) (types.MsgStream, e
 			ctx:    ctx,
 			cancel: cancel,
 
-			p1: t.id,
-			p2: n.ID,
-			r1: make(chan types.Message),
-			r2: make(chan types.Message),
-			w1: make(chan types.Message),
-			w2: make(chan types.Message),
+			blocked: t.blocked,
+			p1:      t.id,
+			p2:      n.ID,
+			r1:      make(chan types.Message),
+			r2:      make(chan types.Message),
+			w1:      make(chan types.Message),
+			w2:      make(chan types.Message),
 		}
 		t.connections[n.ID] = conn
 		go func(id types.NodeID) {
@@ -142,6 +207,7 @@ func (t *Transport) HandleStream(handler func(types.MsgStream)) {
 // after message is accepted into internal OS buffer, for simplicity
 // internal buffer always is a single item
 type Connection struct {
+	blocked        *Blocked
 	p1, p2         types.NodeID
 	ctx            context.Context
 	cancel         func()
@@ -169,21 +235,23 @@ func (c *Connection) Close() {
 }
 
 func (c *Connection) run() {
-	var wg sync.WaitGroup
-	wg.Add(2)
+	errc := make(chan error, 2)
 	go func() {
-		deliver(c.ctx, c.r1, c.w1)
-		wg.Done()
+		errc <- c.deliver(c.p1, c.p2, c.r1, c.w1)
 	}()
 	go func() {
-		deliver(c.ctx, c.r2, c.w2)
-		wg.Done()
+		errc <- c.deliver(c.p2, c.p1, c.r2, c.w2)
 	}()
-	wg.Wait()
+	for err := range errc {
+		if err != nil {
+			c.cancel()
+			return
+		}
+	}
 
 }
 
-func deliver(ctx context.Context, r, w chan types.Message) {
+func (c *Connection) deliver(from, to types.NodeID, r, w chan types.Message) error {
 	var (
 		msg     types.Message
 		out, in chan types.Message
@@ -197,9 +265,12 @@ func deliver(ctx context.Context, r, w chan types.Message) {
 			in = w
 		}
 		select {
-		case <-ctx.Done():
-			return
+		case <-c.ctx.Done():
+			return nil
 		case msg = <-in:
+			if c.blocked.Drop(from, to) {
+				return error(syscall.EHOSTUNREACH)
+			}
 		case out <- msg:
 			msg = nil
 		}

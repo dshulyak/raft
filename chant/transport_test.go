@@ -87,3 +87,47 @@ func TestMsgReverse(t *testing.T) {
 		require.Equal(t, i, msg)
 	}
 }
+
+func TestStreamsBlocked(t *testing.T) {
+	net := New()
+	t.Cleanup(func() {
+		net.Close()
+	})
+	first := net.Transport(1)
+	second := net.Transport(2)
+
+	received := make(chan types.Message, 1)
+	second.HandleStream(func(stream types.MsgStream) {
+		go func() {
+			for {
+				msg, err := stream.Receive()
+				if err != nil {
+					received <- err
+					return
+				}
+				received <- msg
+			}
+		}()
+	})
+
+	stream, err := first.Dial(context.TODO(), &types.Node{ID: 2})
+	require.NoError(t, err)
+
+	expect := 10
+	require.NoError(t, stream.Send(expect))
+	select {
+	case <-time.After(time.Second):
+		require.FailNow(t, "timed out waiting for a message")
+	case msg := <-received:
+		require.Equal(t, expect, msg)
+	}
+	net.Block(1, 2)
+	dropped := 11
+	require.NoError(t, stream.Send(dropped))
+	select {
+	case <-time.After(time.Second):
+		require.FailNow(t, "timed out waiting for an error")
+	case err := <-received:
+		require.Equal(t, io.EOF, err)
+	}
+}
