@@ -63,7 +63,7 @@ func (a *appStateMachine) run() (err error) {
 		case applied <- learned:
 			applied = nil
 		case update := <-a.updatesC:
-			a.logger.Debugw("app received update", "commit", update.Commit, "proposals", len(update.Proposals))
+			a.logger.Debugw("app received update", "commit", update.Commit, "proposals", update.Proposals)
 			if err = a.onUpdate(update); err != nil {
 				return
 			}

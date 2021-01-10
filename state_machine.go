@@ -555,7 +555,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		msg.Entries[i].Index = l.nextLogIndex
 		msg.Entries[i].Term = l.Term
 		l.nextLogIndex++
-		l.logger.Debugw("append entry on a leader",
+		l.logger.Debugw("append entry on a leader and send proposal",
 			"index", msg.Entries[i].Index, "term", msg.Entries[i].Term)
 		l.must(l.log.Append(msg.Entries[i]), "failed to append a record")
 		_ = l.inflight.PushBack(proposals[i])

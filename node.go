@@ -249,10 +249,11 @@ func (n *node) run() (err error) {
 				if app != nil {
 					app.Proposals = append(app.Proposals, update.Proposals...)
 					app.Commit = update.Commit
-				}
-				app = &appUpdate{
-					Commit:    update.Commit,
-					Proposals: update.Proposals,
+				} else {
+					app = &appUpdate{
+						Commit:    update.Commit,
+						Proposals: update.Proposals,
+					}
 				}
 			}
 			n.manageConnections(n.global.Configuration, update)

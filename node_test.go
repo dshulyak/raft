@@ -51,7 +51,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	template := &Context{
 		Context:                ctx,
 		EntriesPerAppend:       1,
-		ProposalsBuffer:        10,
+		ProposalsBuffer:        2,
 		PendingProposalsBuffer: 10,
 		TickInterval:           20 * time.Millisecond,
 		HeartbeatTimeout:       3,
@@ -117,9 +117,9 @@ func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
 			atomic.StoreUint64(&c.lastLeader, uint64(redirect.Leader.ID))
 		} else if errors.Is(err, ErrLeaderStepdown) {
 		} else if errors.Is(err, ErrProposalsOverflow) {
-			time.Sleep(time.Second)
+			time.Sleep(100 * time.Millisecond)
 		} else {
-			return err
+			return fmt.Errorf("%w: entry %v", err, proposal.Entry)
 		}
 
 	}
@@ -146,7 +146,7 @@ func TestNodeProposalsConcurrent(t *testing.T) {
 			defer wg.Done()
 			op, err := c.encoder.Insert(uint64(i), nil)
 			require.NoError(t, err)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			require.NoError(t, c.propose(ctx, op), i)
 		}(i)
