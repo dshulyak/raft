@@ -298,7 +298,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		f.VotedFor = None
 		f.must(f.Sync(), "failed to sync durable state")
 	}
-	if f.leader == None {
+	if f.leader != msg.Leader {
 		f.leader = msg.Leader
 		u.LeaderState = LeaderKnown
 		u.Updated = true
@@ -509,7 +509,12 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 
 func toLeader(s *state, u *Update) *leader {
 	s.logger.Debugw("leader is elected", "id", s.id, "term", s.Term)
-	l := leader{state: s, matchIndex: map[NodeID]uint64{}, inflight: list.New()}
+	l := leader{
+		state:              s,
+		matchIndex:         map[NodeID]uint64{},
+		checkQuorumTimeout: s.minElection,
+		checkQuorum:        map[NodeID]struct{}{},
+		inflight:           list.New()}
 	last, err := s.log.Last()
 	if errors.Is(err, raftlog.ErrEmptyLog) {
 		l.nextLogIndex = 1
@@ -535,7 +540,11 @@ type leader struct {
 	nextLogIndex uint64
 	prevLog      LogHeader
 	matchIndex   map[NodeID]uint64
-	inflight     *list.List
+
+	checkQuorumTimeout int
+	checkQuorum        map[NodeID]struct{}
+
+	inflight *list.List
 }
 
 func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
@@ -570,6 +579,19 @@ func (l *leader) tick(n int, u *Update) role {
 	// the idle periods.
 	// technically it doesn't affect the protocol as long as heartbeats timeout
 	// is lower than the electiom timeout
+	l.checkQuorumTimeout -= n
+	if l.checkQuorumTimeout <= 0 {
+		// don't count leader itself
+		expect := l.majority() - 1
+		if n := len(l.checkQuorum); n < expect {
+			l.logger.Debugw("CheckQuorum failed", "received", n, "expected", expect)
+			return l.stepdown(0, u)
+		}
+		for id := range l.checkQuorum {
+			delete(l.checkQuorum, id)
+		}
+		l.checkQuorumTimeout = l.minElection
+	}
 	return nil
 }
 
@@ -641,6 +663,7 @@ func (l *leader) next(msg interface{}, u *Update) role {
 }
 
 func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) role {
+	l.checkQuorum[m.Follower] = struct{}{}
 	if !m.Success {
 		// peer replication channel will take care of conflicts
 		return nil

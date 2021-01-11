@@ -14,10 +14,13 @@ import (
 	"github.com/dshulyak/raft/chant"
 	"github.com/dshulyak/raftlog"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type nodeCluster struct {
-	t     TestingHelper
+	t      TestingHelper
+	logger *zap.SugaredLogger
+
 	net   *chant.Network
 	nodes map[NodeID]*node
 	apps  map[NodeID]*keyValueApp
@@ -36,9 +39,10 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	t.Cleanup(func() {
 		cancel()
 	})
-
+	logger := testLogger(t)
 	nc := &nodeCluster{
 		t:       t,
+		logger:  logger.Sugar(),
 		net:     chant.New(),
 		nodes:   map[NodeID]*node{},
 		apps:    map[NodeID]*keyValueApp{},
@@ -46,7 +50,6 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		encoder: newKeyValueApp(),
 	}
 
-	logger := testLogger(t)
 	template := &Context{
 		Context:                ctx,
 		EntriesPerAppend:       1,
@@ -99,29 +102,67 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	return nc
 }
 
-func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
-	if NodeID(atomic.LoadUint64(&c.lastLeader)) == None {
-		// or choose randomly
-		atomic.StoreUint64(&c.lastLeader, 1)
+func (c *nodeCluster) knownLeader() NodeID {
+	return NodeID(atomic.LoadUint64(&c.lastLeader))
+}
+
+func (c *nodeCluster) nextLeader(leader NodeID) {
+	atomic.CompareAndSwapUint64(&c.lastLeader, uint64(leader), (uint64(leader)%uint64(len(c.nodes)))+1)
+}
+
+func (c *nodeCluster) blockLeader() {
+	leader := c.knownLeader()
+	require.NotEqual(c.t, None, leader, "leader must be known")
+	for id := range c.nodes {
+		if id != leader {
+			c.net.Block(leader, id)
+		}
 	}
+}
+
+func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
+	c.nextLeader(None)
 	for {
-		n := c.nodes[NodeID(atomic.LoadUint64(&c.lastLeader))]
+		leader := c.knownLeader()
+		n := c.nodes[leader]
+		c.logger.Debugw("proposed to a leader", "leader", leader)
 		proposal, err := n.Propose(ctx, op)
-		require.NoError(c.t, err)
+		if err != nil {
+			c.nextLeader(leader)
+			return err
+		}
 		err = proposal.Wait(ctx)
 		if err == nil {
 			return nil
 		}
+		c.logger.Debugw("proposal result", "proposal", proposal, "error", err)
 		redirect := &ErrRedirect{}
 		if errors.As(err, &redirect) {
 			atomic.StoreUint64(&c.lastLeader, uint64(redirect.Leader.ID))
 		} else if errors.Is(err, ErrLeaderStepdown) {
+			// just switch to any other node
+			c.logger.Debugw("observed leader stepdown", "leader", leader)
+			c.nextLeader(leader)
 		} else if errors.Is(err, ErrProposalsOverflow) {
+			// simple backoff
 			time.Sleep(100 * time.Millisecond)
 		} else {
+			c.nextLeader(leader)
 			return fmt.Errorf("%w: entry %v", err, proposal.Entry)
 		}
 	}
+}
+
+// retries will retry f() at most n times.
+func retries(n int, f func() error) (err error) {
+	for n >= 0 {
+		err = f()
+		if err == nil {
+			return
+		}
+		n--
+	}
+	return
 }
 
 func TestNodeProposalsSequential(t *testing.T) {
@@ -160,7 +201,7 @@ func TestNodeRecoverFromPartition(t *testing.T) {
 	c.net.Block(1, 3)
 	c.net.Block(2, 3)
 	op, err := c.encoder.Insert(uint64(1), nil)
-	// time.Second is actually depends on the configured election timeout
+	// time.Second depends on the configured election timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	require.NoError(t, err)
@@ -172,4 +213,21 @@ func TestNodeRecoverFromPartition(t *testing.T) {
 	defer cancel()
 	require.NoError(t, err)
 	require.NoError(t, c.propose(ctx, op))
+}
+
+func TestNodeLeaderPartitioned(t *testing.T) {
+	c := newNodeCluster(t, 3)
+	failpoint := 4
+	for i := 1; i <= 10; i++ {
+		if i == failpoint {
+			c.blockLeader()
+		}
+		op, err := c.encoder.Insert(uint64(i), nil)
+		require.NoError(t, err)
+		require.NoError(t, retries(3, func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			return c.propose(ctx, op)
+		}))
+	}
 }

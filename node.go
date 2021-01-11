@@ -263,7 +263,7 @@ func (n *node) run() (err error) {
 				n.logger.Debugw("leader was elected. accepting proposals")
 				blockedProposals = proposals
 			case LeaderUnknown:
-				n.logger.Debugw("leader is unknown. stopped accepting proposals")
+				n.logger.Debugw("leader is unknown. not accepting proposals")
 				blockedProposals = nil
 			}
 		}
