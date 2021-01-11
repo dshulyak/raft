@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
@@ -76,6 +77,8 @@ type Update struct {
 
 type state struct {
 	logger *zap.SugaredLogger
+
+	rng *rand.Rand
 
 	minElection, maxElection int
 	election                 int
@@ -151,8 +154,7 @@ func (s *state) send(u *Update, msg interface{}, to ...NodeID) {
 }
 
 func (s *state) resetTicks() {
-	// TODO allow to set custom rand function?
-	s.election = rand.Intn(s.maxElection) + s.minElection
+	s.election = s.rng.Intn(s.maxElection-s.minElection) + s.minElection
 }
 
 type role interface {
@@ -173,9 +175,11 @@ func newStateMachine(logger *zap.Logger,
 		node := &conf.Nodes[i]
 		nodes[node.ID] = node
 	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &stateMachine{
 		update: update,
 		role: toFollower(&state{
+			rng:           rng,
 			DurableState:  ds,
 			logger:        logger.With(zap.Uint64("ID", uint64(id))).Sugar(),
 			minElection:   minTicks,

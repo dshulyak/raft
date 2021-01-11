@@ -99,7 +99,7 @@ func (s *server) Add(node *Node) {
 		// otherwise when an already accepted stream will be closing
 		// it will check if connector exists or not
 		// this is done in order for dialed and accepted streams to
-		// have shared codepath
+		// have a shared codepath
 		if !exist {
 			s.accept(node.ID, nil)
 		}
@@ -126,24 +126,33 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 			conn  *connector
 			err   error
 		)
+		// only one goroutine is suppose to call dial
+		// this is enforced by an owner boolean, the first g that updates
+		// the connection is an owner and it shouldn't exit until a connector
+		// is removed from a server
 		for {
-			if conn != nil {
-				stream, err = conn.dialWithBackoff()
-			}
+			owner = s.setConnected(id)
 			if err == nil && stream != nil {
 				s.protocol(stream)
 			}
-			if stream != nil {
-				if owner {
-					s.removeConnected(id)
-				}
-				stream = nil
-			}
-			owner = s.setConnected(id)
-			if !owner {
+			if owner {
+				s.removeConnected(id)
+			} else {
 				return
 			}
+
 			conn = s.getConnector(id)
+			if conn != nil {
+				s.logger.Debugw("dialing to a peer", "peer", id)
+				stream, err = conn.dialWithBackoff()
+				if err != nil {
+					s.logger.Debugw("dial to a peer failed", "peer", id, "error", err)
+				} else {
+					s.logger.Debugw("dial finished", "peer", id)
+				}
+			} else {
+				return
+			}
 		}
 	}()
 }

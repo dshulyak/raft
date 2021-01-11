@@ -47,13 +47,12 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	}
 
 	logger := testLogger(t)
-
 	template := &Context{
 		Context:                ctx,
 		EntriesPerAppend:       1,
 		ProposalsBuffer:        2,
 		PendingProposalsBuffer: 10,
-		Backoff:                200 * time.Millisecond,
+		Backoff:                100 * time.Millisecond,
 		TickInterval:           20 * time.Millisecond,
 		HeartbeatTimeout:       3,
 		ElectionTimeoutMin:     10,
@@ -122,7 +121,6 @@ func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
 		} else {
 			return fmt.Errorf("%w: entry %v", err, proposal.Entry)
 		}
-
 	}
 }
 
@@ -154,4 +152,24 @@ func TestNodeProposalsConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 
+}
+
+func TestNodeRecoverFromPartition(t *testing.T) {
+	c := newNodeCluster(t, 3)
+	c.net.Block(1, 2)
+	c.net.Block(1, 3)
+	c.net.Block(2, 3)
+	op, err := c.encoder.Insert(uint64(1), nil)
+	// time.Second is actually depends on the configured election timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, err)
+	require.Error(t, context.Canceled, c.propose(ctx, op))
+
+	c.net.Restore()
+
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, err)
+	require.NoError(t, c.propose(ctx, op))
 }
