@@ -167,9 +167,22 @@ func (t *Transport) Dial(ctx context.Context, n *types.Node) (types.MsgStream, e
 		}(n.ID)
 	}
 	s1, s2 := conn.Pair()
-	if err := t.network.Accept(n.ID, s2); err != nil {
-		conn.Close()
-		delete(t.connections, n.ID)
+	errc := make(chan error, 1)
+	t.mu.Unlock()
+	// if this is to done synchronously there is a possibility of deadlock
+	// such as if peer1 tries to connect to peer2 and vice versa
+	// both of them will need to wait for the other one to accept which acquires
+	// a lock on a transport
+	go func() {
+		err := t.network.Accept(n.ID, s2)
+		if err != nil {
+			conn.Close()
+		}
+		errc <- err
+	}()
+	err := <-errc
+	t.mu.Lock()
+	if err != nil {
 		return nil, err
 	}
 	return s1, nil
