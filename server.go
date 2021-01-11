@@ -121,18 +121,13 @@ func (s *server) Remove(id NodeID) {
 
 func (s *server) accept(id NodeID, stream MsgStream) {
 	go func() {
-		var (
-			owner bool
-			conn  *connector
-			err   error
-		)
 		// only one goroutine is suppose to call dial
 		// this is enforced by an owner boolean, the first g that updates
 		// the connection is an owner and it shouldn't exit until a connector
 		// is removed from a server
 		for {
-			owner = s.setConnected(id)
-			if err == nil && stream != nil {
+			owner := s.setConnected(id)
+			if stream != nil {
 				s.protocol(stream)
 			}
 			if owner {
@@ -141,9 +136,10 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 				return
 			}
 
-			conn = s.getConnector(id)
+			conn := s.getConnector(id)
 			if conn != nil {
 				s.logger.Debugw("dialing to a peer", "peer", id)
+				var err error
 				stream, err = conn.dialWithBackoff()
 				if err != nil {
 					s.logger.Debugw("dial to a peer failed", "peer", id, "error", err)
