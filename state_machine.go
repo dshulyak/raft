@@ -404,6 +404,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	context := "vote is not granted"
 	if grant {
 		context = "granted a vote"
+		f.resetTicks()
 	}
 	f.logger.Debugw(context,
 		"term", msg.Term,
