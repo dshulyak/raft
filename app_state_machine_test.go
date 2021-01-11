@@ -71,24 +71,27 @@ func (a *keyValueApp) decode(buf []byte, op *encodedOp) error {
 	return gob.NewDecoder(b).Decode(op)
 }
 
-func (a *keyValueApp) Apply(entry *raftlog.LogEntry, proposal *Proposal) {
+func (a *keyValueApp) Apply(entry *raftlog.LogEntry) interface{} {
 	var op encodedOp
 	err := a.decode(entry.Op, &op)
 	if err == nil {
 		a.mu.Lock()
+		defer a.mu.Unlock()
 		switch op.Kind {
 		case insertOp:
 			a.vals[op.Key] = op.Value
+			return true
 		case deleteOp:
-			delete(a.vals, op.Key)
+			if _, exist := a.vals[op.Key]; exist {
+				delete(a.vals, op.Key)
+				return true
+			}
+			return false
 		default:
 			err = fmt.Errorf("unknown operation code %d", op.Kind)
 		}
-		a.mu.Unlock()
 	}
-	if proposal != nil {
-		proposal.Complete(err)
-	}
+	return err
 }
 
 func TestApplyLogs(t *testing.T) {

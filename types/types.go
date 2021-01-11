@@ -75,9 +75,9 @@ type ConfChange struct {
 	Node Node
 }
 
-func NewProposal(parent context.Context, entry *raftlog.LogEntry) *Proposal {
+func NewProposal(ctx context.Context, entry *raftlog.LogEntry) *Proposal {
 	return &Proposal{
-		ctx:    parent,
+		ctx:    ctx,
 		result: make(chan error, 1),
 		Entry:  entry,
 	}

@@ -20,5 +20,5 @@ type MsgStream interface {
 }
 
 type Application interface {
-	Apply(*raftlog.LogEntry, *Proposal)
+	Apply(*raftlog.LogEntry) interface{}
 }

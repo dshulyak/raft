@@ -21,6 +21,9 @@ type Context struct {
 	EntriesPerAppend int
 	// Proposals that are buffered by the node while state machine is busy.
 	ProposalsBuffer int
+	// ProposalsEvictionTimeout period since last batch of proposals were consumed
+	// by a raft state machine.
+	ProposalsEvictionTimeout time.Duration
 	// Proposals that are waiting for a confirmation from a majority of nodes.
 	PendingProposalsBuffer int
 

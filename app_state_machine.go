@@ -102,7 +102,10 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 		}
 		if entry.OpType == raftlog.LogApplication {
 			a.logger.Debugw("applying entry", "index", entry.Index, "term", entry.Term, "proposed", proposal != nil)
-			a.app.Apply(entry, proposal)
+			a.app.Apply(entry)
+			if proposal != nil {
+				proposal.Complete(nil)
+			}
 		}
 		a.lastApplied = next
 	}

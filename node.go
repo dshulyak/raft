@@ -15,6 +15,9 @@ import (
 var (
 	// ErrProposalsOverflow raised in case nodes proposal queue overflows.
 	ErrProposalsOverflow = errors.New("proposals queue overflow")
+	// ErrProposalsEvicted raised if proposals are not consumed and not potentially
+	// in the limbo.
+	ErrProposalsEvicted = errors.New("proposals are evicted")
 	// ErrStopped raised if node is shutting down due to a crash or a request.
 	ErrStopped = errors.New("node is stopped")
 )
