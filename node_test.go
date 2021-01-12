@@ -148,7 +148,7 @@ func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
 			time.Sleep(100 * time.Millisecond)
 		} else {
 			c.nextLeader(leader)
-			return fmt.Errorf("%w: entry %v", err, proposal.Entry)
+			return err
 		}
 	}
 }

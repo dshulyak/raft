@@ -75,18 +75,40 @@ type ConfChange struct {
 	Node Node
 }
 
+func NewReadRequest(ctx context.Context) *Proposal {
+	return &Proposal{
+		ctx:  ctx,
+		errc: make(chan error, 1),
+		read: true,
+	}
+}
+
 func NewProposal(ctx context.Context, entry *raftlog.LogEntry) *Proposal {
 	return &Proposal{
-		ctx:    ctx,
-		result: make(chan error, 1),
-		Entry:  entry,
+		ctx:   ctx,
+		errc:  make(chan error, 1),
+		Entry: entry,
 	}
 }
 
 type Proposal struct {
 	ctx    context.Context
-	result chan error
+	errc   chan error
+	read   bool
+	result interface{}
 	Entry  *raftlog.LogEntry
+}
+
+func (p *Proposal) Read() bool {
+	return p.read
+}
+
+func (p *Proposal) Result() interface{} {
+	return p.result
+}
+
+func (p *Proposal) UpdateResult(result interface{}) {
+	p.result = result
 }
 
 func (p *Proposal) Complete(err error) {
@@ -95,7 +117,7 @@ func (p *Proposal) Complete(err error) {
 	}
 	select {
 	case <-p.ctx.Done():
-	case p.result <- err:
+	case p.errc <- err:
 	}
 }
 
@@ -106,7 +128,7 @@ func (p *Proposal) Wait(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case err := <-p.result:
+	case err := <-p.errc:
 		return err
 	case <-p.ctx.Done():
 		return p.ctx.Err()

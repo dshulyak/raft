@@ -176,7 +176,16 @@ func (n *node) msgPipeline(id NodeID, msg Message) {
 	_ = n.Push(msg)
 }
 
-func (n *node) Propose(ctx context.Context, data []byte) (*types.Proposal, error) {
+type WriteRequest interface {
+	ReadRequest
+	Result() interface{}
+}
+
+type ReadRequest interface {
+	Wait(context.Context) error
+}
+
+func (n *node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 	proposal := types.NewProposal(n.ctx,
 		&raftlog.LogEntry{
 			OpType: raftlog.LogApplication,
