@@ -62,10 +62,26 @@ type appUpdate struct {
 	Proposals []*Proposal
 }
 
-func newNode(global *Context) *node {
-	ctx, cancel := context.WithCancel(global)
+// NewNode creates instance of the raft node.
+// After node is instantiated the caller must watch for error.
+//
+// err := node.Wait()
+//
+// It will be blocking until either Node is closed with node.Close(), and in such case
+// error will be nil, or node crashes with irrecoverable error (only disk IO currently).
+//
+// To submit new operations use:
+//
+// wr, err := node.Propose(ctx, []byte("user command"))
+//
+// it will return future-like object that will be either failed or completed without error.
+// err := wr.Wait(ctx)
+// If error is nil wr.Result() will return an opaque interface{}. It is the same object
+// returned by the Apply method of the App interface.
+func NewNode(global *Config) *Node {
+	ctx, cancel := context.WithCancel(context.Background())
 	group, ctx := errgroup.WithContext(ctx)
-	n := &node{
+	n := &Node{
 		global:       global,
 		logger:       global.Logger.Sugar(),
 		ctx:          ctx,
@@ -89,7 +105,7 @@ func newNode(global *Context) *node {
 	)
 	n.app = newAppStateMachine(ctx, global, n.group)
 	n.streams = newStreamHandler(ctx, global.Logger, n.msgPipeline)
-	n.server = newServer(global, n.streams.handle)
+	n.server = newServer(global, ctx, n.streams.handle)
 	n.group.Go(n.run)
 	go func() {
 		<-ctx.Done()
@@ -102,8 +118,9 @@ func newNode(global *Context) *node {
 	return n
 }
 
-type node struct {
-	global *Context
+// Node ...
+type Node struct {
+	global *Config
 	logger *zap.SugaredLogger
 
 	ctx    context.Context
@@ -126,13 +143,13 @@ type node struct {
 	proposals chan *Proposal
 }
 
-func (n *node) getMailbox(id NodeID) *peerMailbox {
+func (n *Node) getMailbox(id NodeID) *peerMailbox {
 	n.bmu.Lock()
 	defer n.bmu.Unlock()
 	return n.mailboxes[id]
 }
 
-func (n *node) sendMessages(u *Update) {
+func (n *Node) sendMessages(u *Update) {
 	if len(u.Msgs) == 0 {
 		return
 	}
@@ -153,7 +170,7 @@ func (n *node) sendMessages(u *Update) {
 	}
 }
 
-func (n *node) manageConnections(conf *Configuration, u *Update) {
+func (n *Node) manageConnections(conf *Configuration, u *Update) {
 	if u.State == RaftCandidate {
 		for i := range conf.Nodes {
 			if conf.Nodes[i].ID != n.global.ID {
@@ -169,11 +186,11 @@ func (n *node) manageConnections(conf *Configuration, u *Update) {
 	}
 }
 
-func (n *node) msgPipeline(id NodeID, msg Message) {
+func (n *Node) msgPipeline(id NodeID, msg Message) {
 	if mailbox := n.getMailbox(id); mailbox != nil {
 		mailbox.Response(msg)
 	}
-	_ = n.Push(msg)
+	_ = n.push(msg)
 }
 
 type WriteRequest interface {
@@ -185,7 +202,7 @@ type ReadRequest interface {
 	Wait(context.Context) error
 }
 
-func (n *node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
+func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 	proposal := types.NewProposal(n.ctx,
 		&raftlog.LogEntry{
 			OpType: raftlog.LogApplication,
@@ -202,7 +219,7 @@ func (n *node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 	}
 }
 
-func (n *node) Push(msg Message) error {
+func (n *Node) push(msg Message) error {
 	select {
 	case n.messages <- msg:
 		return nil
@@ -211,7 +228,7 @@ func (n *node) Push(msg Message) error {
 	}
 }
 
-func (n *node) run() (err error) {
+func (n *Node) run() (err error) {
 	defer n.logger.Debugw("node exited", "error", err)
 	var (
 		// node shouldn't consume from buffer until the leader is known
@@ -282,11 +299,11 @@ func (n *node) run() (err error) {
 	}
 }
 
-func (n *node) Close() {
+func (n *Node) Close() {
 	n.cancel()
 	n.server.Close()
 }
 
-func (n *node) Wait() error {
+func (n *Node) Wait() error {
 	return <-n.closeC
 }

@@ -15,8 +15,8 @@ var (
 
 type handler func(MsgStream)
 
-func newServer(global *Context, protocol handler) *server {
-	ctx, cancel := context.WithCancel(global)
+func newServer(global *Config, ctx context.Context, protocol handler) *server {
+	ctx, cancel := context.WithCancel(ctx)
 	srv := &server{
 		logger:      global.Logger.Sugar(),
 		ctx:         ctx,
@@ -78,7 +78,7 @@ func (s *server) getConnector(id NodeID) *connector {
 // policy.
 // In case if two nodes will connect to each it is the protocol responsibility to
 // close redundant streams or make use of them.
-func (s *server) Add(node *Node) {
+func (s *server) Add(node *ConfNode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, exist := s.connectors[node.ID]
@@ -174,7 +174,7 @@ type connector struct {
 
 	dialTimeout time.Duration
 	tr          Transport
-	node        *Node
+	node        *ConfNode
 
 	backoff   time.Duration
 	doBackoff bool

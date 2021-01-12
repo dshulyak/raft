@@ -102,13 +102,12 @@ func TestApplyLogs(t *testing.T) {
 		storage.Delete()
 	})
 	app := newKeyValueApp()
-	global := &Context{
-		Context: context.Background(),
+	global := &Config{
 		Storage: storage,
 		App:     app,
 		Logger:  logger,
 	}
-	group, ctx := errgroup.WithContext(global)
+	group, ctx := errgroup.WithContext(context.Background())
 	appSM := newAppStateMachine(ctx, global, group)
 	t.Cleanup(func() {
 		appSM.close()

@@ -98,7 +98,7 @@ type peerMailbox struct {
 	current peerDeliveryChannel
 }
 
-func (m *peerMailbox) Update(global *Context, state RaftState) {
+func (m *peerMailbox) Update(global *Config, state RaftState) {
 	if state == 0 || m.state == state {
 		return
 	}

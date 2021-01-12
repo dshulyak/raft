@@ -86,7 +86,7 @@ type state struct {
 	id     NodeID
 	leader NodeID
 
-	nodes         map[NodeID]*Node
+	nodes         map[NodeID]*ConfNode
 	configuration *Configuration
 
 	*DurableState
@@ -170,7 +170,7 @@ func newStateMachine(logger *zap.Logger,
 	ds *DurableState,
 ) *stateMachine {
 	update := &Update{}
-	nodes := map[NodeID]*Node{}
+	nodes := map[NodeID]*ConfNode{}
 	for i := range conf.Nodes {
 		node := &conf.Nodes[i]
 		nodes[node.ID] = node

@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func newAppStateMachine(ctx context.Context, global *Context, group *errgroup.Group) *appStateMachine {
+func newAppStateMachine(ctx context.Context, global *Config, group *errgroup.Group) *appStateMachine {
 	ctx, cancel := context.WithCancel(ctx)
 	sm := &appStateMachine{
 		ctx:      ctx,

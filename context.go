@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"context"
 	"time"
 
 	"github.com/dshulyak/raft/types"
@@ -9,10 +8,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type Context struct {
-	// TODO remove context.Context from this object and rename it to Config
-	context.Context
-
+type Config struct {
 	ID        types.NodeID
 	Transport types.Transport
 	App       types.Application

@@ -38,7 +38,7 @@ func getTestCluster(t TestingHelper, n, minTicks, maxTicks int) *testCluster {
 	configuration := &Configuration{}
 	// 0 is reserved as None
 	for i := 1; i <= n; i++ {
-		configuration.Nodes = append(configuration.Nodes, Node{ID: NodeID(i)})
+		configuration.Nodes = append(configuration.Nodes, ConfNode{ID: NodeID(i)})
 	}
 
 	cluster := &testCluster{

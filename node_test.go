@@ -22,7 +22,7 @@ type nodeCluster struct {
 	logger *zap.SugaredLogger
 
 	net   *chant.Network
-	nodes map[NodeID]*node
+	nodes map[NodeID]*Node
 	apps  map[NodeID]*keyValueApp
 
 	lastLeader uint64
@@ -44,14 +44,13 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		t:       t,
 		logger:  logger.Sugar(),
 		net:     chant.New(),
-		nodes:   map[NodeID]*node{},
+		nodes:   map[NodeID]*Node{},
 		apps:    map[NodeID]*keyValueApp{},
 		ctx:     ctx,
 		encoder: newKeyValueApp(),
 	}
 
-	template := &Context{
-		Context:                ctx,
+	template := &Config{
 		EntriesPerAppend:       1,
 		ProposalsBuffer:        2,
 		PendingProposalsBuffer: 10,
@@ -66,7 +65,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	// pass final configuration before starting all sorts of asynchronous tasks
 	for i := 1; i <= n; i++ {
 		template.Configuration.Nodes = append(template.Configuration.Nodes,
-			Node{ID: NodeID(i)})
+			ConfNode{ID: NodeID(i)})
 	}
 
 	var err error
@@ -92,7 +91,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		t.Cleanup(func() {
 			c.State.Close()
 		})
-		n := newNode(&c)
+		n := NewNode(&c)
 		nc.nodes[c.ID] = n
 		t.Cleanup(func() {
 			n.Close()

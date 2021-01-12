@@ -17,23 +17,21 @@ func TestServerConnect(t *testing.T) {
 	tr2 := net.Transport(2)
 	connected1 := make(chan NodeID)
 	connected2 := make(chan NodeID)
-	ctx1 := &Context{
-		Context:   context.Background(),
+	ctx1 := &Config{
 		Logger:    testLogger(t),
 		Transport: tr1,
 	}
-	srv1 := newServer(ctx1, func(stream MsgStream) {
+	srv1 := newServer(ctx1, context.TODO(), func(stream MsgStream) {
 		defer stream.Close()
 		connected1 <- stream.ID()
 	})
 	defer srv1.Close()
-	ctx2 := &Context{
-		Context:   context.Background(),
+	ctx2 := &Config{
 		Logger:    testLogger(t),
 		Transport: tr2,
 	}
 	errc := make(chan error)
-	srv2 := newServer(ctx2, func(stream MsgStream) {
+	srv2 := newServer(ctx2, context.TODO(), func(stream MsgStream) {
 		defer stream.Close()
 		connected2 <- stream.ID()
 		_, err := stream.Receive()
@@ -42,7 +40,7 @@ func TestServerConnect(t *testing.T) {
 		}
 	})
 	defer srv2.Close()
-	srv1.Add(&Node{ID: 2})
+	srv1.Add(&ConfNode{ID: 2})
 	select {
 	case n := <-connected1:
 		require.Equal(t, NodeID(2), n)
