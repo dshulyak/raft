@@ -453,6 +453,7 @@ func toCandidate(s *state, u *Update) *candidate {
 	request.LastLog.Index = last.Index
 	s.logger.Debugw("starting an election campaign", "candidate", s.id, "term", s.Term)
 	s.send(u, request)
+	u.LeaderState = LeaderUnknown
 	u.State = RaftCandidate
 	u.Updated = true
 	return &c
@@ -597,7 +598,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		if proposal.Read() {
 			// readIndex is the same for all read requests submitted in a batch
 			// zero is a null value, which is invalid as it is always returned
-			// by the follower
+			// by the follower by default
 			if msg.ReadIndex == 0 {
 				l.readIndex++
 				// wraparound null
