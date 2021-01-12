@@ -219,6 +219,28 @@ func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 	}
 }
 
+// Read returns future-like object that receives notification when read is safe to execute.
+// Simplified client code:
+//
+// rr, err := n.Read(ctx)
+// must(err)
+// err = rr.Wait()
+// must(err)
+// app.Get(key)
+//
+// Read, unlike Proposal, bypasses raftlog but still requires coordination with followers to guarantee linearizability. If reading state data is not a problem client may ommit performing a Read on a raft node and go straight to the app.
+func (n *Node) Read(ctx context.Context) (ReadRequest, error) {
+	rr := types.NewReadRequest(n.ctx)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-n.ctx.Done():
+		return nil, ErrStopped
+	case n.proposals <- rr:
+		return rr, nil
+	}
+}
+
 func (n *Node) push(msg Message) error {
 	select {
 	case n.messages <- msg:

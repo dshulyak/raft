@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"sort"
 	"time"
 
 	"github.com/dshulyak/raft/types"
@@ -160,6 +159,7 @@ func (s *state) resetTicks() {
 type role interface {
 	tick(int, *Update) role
 	next(interface{}, *Update) role
+	applied(uint64, *Update)
 }
 
 func newStateMachine(logger *zap.Logger,
@@ -227,6 +227,10 @@ func (s *stateMachine) Next(msg interface{}) (err error) {
 	return
 }
 
+func (s *stateMachine) Applied(applied uint64) {
+	s.role.applied(applied, s.update)
+}
+
 func (s *stateMachine) Update() *Update {
 	if !s.update.Updated {
 		return nil
@@ -256,6 +260,8 @@ func toFollower(s *state, term uint64, u *Update) *follower {
 type follower struct {
 	*state
 }
+
+func (f *follower) applied(uint64, *Update) {}
 
 func (f *follower) tick(n int, u *Update) role {
 	f.election -= n
@@ -367,9 +373,10 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		f.commit(u, min(msg.Commited, last.Index))
 	}
 	resp := &AppendEntriesResponse{
-		Term:     f.Term,
-		Follower: f.id,
-		Success:  true,
+		Term:      f.Term,
+		Follower:  f.id,
+		Success:   true,
+		ReadIndex: msg.ReadIndex,
 	}
 	resp.LastLog.Index = last.Index
 	resp.LastLog.Term = last.Term
@@ -456,6 +463,8 @@ type candidate struct {
 	votes map[NodeID]struct{}
 }
 
+func (c *candidate) applied(uint64, *Update) {}
+
 func (c *candidate) tick(n int, u *Update) role {
 	c.election -= n
 	if c.election <= 0 {
@@ -508,14 +517,27 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 	return nil
 }
 
+type readReq struct {
+	proposal *Proposal
+	// commitIndex at the time of request.
+	commitIndex uint64
+	// logical timestamp. once we got confirmation from majority
+	// for index higher or equal to this one request is safe to execute.
+	readIndex uint64
+}
+
 func toLeader(s *state, u *Update) *leader {
 	s.logger.Debugw("leader is elected", "id", s.id, "term", s.Term)
 	l := leader{
 		state:              s,
-		matchIndex:         map[NodeID]uint64{},
+		matchIndex:         newMatch(len(s.configuration.Nodes)),
 		checkQuorumTimeout: s.minElection,
 		checkQuorum:        map[NodeID]struct{}{},
-		inflight:           list.New()}
+		inflight:           list.New(),
+
+		ackedRead: newMatch(len(s.configuration.Nodes)),
+		reads:     list.New(),
+	}
 	last, err := s.log.Last()
 	if errors.Is(err, raftlog.ErrEmptyLog) {
 		l.nextLogIndex = 1
@@ -538,14 +560,29 @@ func toLeader(s *state, u *Update) *leader {
 
 type leader struct {
 	*state
-	nextLogIndex uint64
-	prevLog      LogHeader
-	matchIndex   map[NodeID]uint64
+	// recentlyCommited is true if leader commited in this term.
+	recentlyCommited bool
+	nextLogIndex     uint64
+	prevLog          LogHeader
+	matchIndex       *match
 
 	checkQuorumTimeout int
 	checkQuorum        map[NodeID]struct{}
 
 	inflight *list.List
+
+	appliedIndex uint64
+	readIndex    uint64
+	acked        uint64
+	ackedRead    *match
+	reads        *list.List
+}
+
+func (l *leader) resetReadsIndex(index uint64) {
+	for front := l.reads.Front(); front != nil; front = front.Next() {
+		rr := front.Value.(*readReq)
+		rr.readIndex = index
+	}
 }
 
 func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
@@ -553,25 +590,54 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		Term:     l.Term,
 		Leader:   l.id,
 		Commited: l.commitIndex,
-		Entries:  make([]*raftlog.LogEntry, len(proposals)),
 	}
 	msg.PrevLog.Index = l.prevLog.Index
 	msg.PrevLog.Term = l.prevLog.Term
-	for i := range msg.Entries {
-		msg.Entries[i] = proposals[i].Entry
-		msg.Entries[i].Index = l.nextLogIndex
-		msg.Entries[i].Term = l.Term
+	for _, proposal := range proposals {
+		if proposal.Read() {
+			// readIndex is the same for all read requests submitted in a batch
+			// zero is a null value, which is invalid as it is always returned
+			// by the follower
+			if msg.ReadIndex == 0 {
+				l.readIndex++
+				// wraparound null
+				if l.readIndex == 0 {
+					l.readIndex++
+					l.ackedRead.reset()
+					l.resetReadsIndex(l.readIndex)
+				}
+				msg.ReadIndex = l.readIndex
+			}
+			l.reads.PushBack(&readReq{
+				proposal:    proposal,
+				commitIndex: l.commitIndex,
+				readIndex:   l.readIndex,
+			})
+			continue
+		}
+		entry := proposal.Entry
+		entry.Index = l.nextLogIndex
+		entry.Term = l.Term
+		msg.Entries = append(msg.Entries, entry)
 		l.nextLogIndex++
 		l.logger.Debugw("append entry on a leader and send proposal",
-			"index", msg.Entries[i].Index, "term", msg.Entries[i].Term)
-		l.must(l.log.Append(msg.Entries[i]), "failed to append a record")
-		_ = l.inflight.PushBack(proposals[i])
+			"index", entry, "term", entry)
+		l.must(l.log.Append(entry), "failed to append a record")
+		_ = l.inflight.PushBack(proposal)
 	}
 	if len(msg.Entries) > 0 {
 		l.prevLog.Index = msg.Entries[len(msg.Entries)-1].Index
 		l.prevLog.Term = l.Term
+		l.matchIndex.update(l.id, l.prevLog.Index)
 	}
 	l.send(u, msg)
+}
+
+func (l *leader) applied(applied uint64, u *Update) {
+	if applied > l.appliedIndex {
+		l.appliedIndex = applied
+		l.completePendingReads(u)
+	}
 }
 
 func (l *leader) tick(n int, u *Update) role {
@@ -596,21 +662,28 @@ func (l *leader) tick(n int, u *Update) role {
 	return nil
 }
 
-func (l *leader) completeProposals(err error) {
+// notifyPending notifies both write and read requests submitters.
+func (l *leader) notifyPending(err error) {
 	for front := l.inflight.Front(); front != nil; front = front.Next() {
-		proposal := front.Value.(*Proposal)
-		proposal.Complete(err)
+		front.Value.(*Proposal).Complete(err)
+	}
+	for front := l.reads.Front(); front != nil; front = front.Next() {
+		front.Value.(*Proposal).Complete(err)
 	}
 }
 
 func (l *leader) stepdown(term uint64, u *Update) *follower {
-	l.completeProposals(ErrLeaderStepdown)
+	l.notifyPending(ErrLeaderStepdown)
 	return toFollower(l.state, term, u)
 }
 
 func (l *leader) commitInflight(u *Update, idx uint64) {
 	l.logger.Debugw("commiting proposals on a leader",
 		"commit", idx, "proposals count", l.inflight.Len())
+	if !l.recentlyCommited {
+		l.recentlyCommited = true
+		l.completePendingReads(u)
+	}
 	for front := l.inflight.Front(); front != nil; {
 		proposal := front.Value.(*Proposal)
 		if proposal.Entry.Index > idx {
@@ -663,6 +736,38 @@ func (l *leader) next(msg interface{}, u *Update) role {
 	return nil
 }
 
+func (l *leader) completePendingReads(u *Update) {
+	for front := l.reads.Front(); front != nil; {
+		rr := front.Value.(*readReq)
+		if l.recentlyCommited && l.appliedIndex >= rr.commitIndex && rr.readIndex <= l.acked {
+			rr.proposal.Complete(nil)
+			prev := front
+			front = front.Next()
+			l.inflight.Remove(prev)
+		} else {
+			return
+		}
+	}
+}
+
+func (l *leader) updateReadIndex(follower NodeID, index uint64, u *Update) {
+	// if read index was recently wrapped and we received
+	// response with the index before the wrapping such index will be ignored
+	// 1_000_000 is a quite generous, as it is incremented only once per message
+	// so 1_000_000 will have to be buffered somewhere to break this assumption
+	if l.readIndex < 1_000_000 && index > l.readIndex {
+		return
+	}
+	if !l.ackedRead.update(follower, index) {
+		return
+	}
+	acked := l.ackedRead.commited()
+	if acked > l.acked {
+		l.acked = acked
+		l.completePendingReads(u)
+	}
+}
+
 func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) role {
 	l.checkQuorum[m.Follower] = struct{}{}
 	if !m.Success {
@@ -670,27 +775,15 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 		return nil
 	}
 	l.logger.Debugw("leader received response", "msg", m)
-	current := l.matchIndex[m.Follower]
-	if current >= m.LastLog.Index {
+	l.updateReadIndex(m.Follower, m.ReadIndex, u)
+	if !l.matchIndex.update(m.Follower, m.LastLog.Index) {
 		return nil
 	}
-	l.matchIndex[m.Follower] = m.LastLog.Index
 	if m.LastLog.Index <= l.commitIndex {
 		// oudated server is catching up
 		return nil
 	}
-	// we received an actual update. time to check if we can commit new entries
-	indexes := make([]uint64, len(l.configuration.Nodes)-1)
-	i := 0
-	for _, index := range l.matchIndex {
-		indexes[i] = index
-		i++
-	}
-	sort.Slice(indexes, func(i, j int) bool {
-		return indexes[i] < indexes[j]
-	})
-	// leader is excluded from the matchIndex slice. so the size is always N-1
-	idx := indexes[l.majority()-1]
+	idx := l.matchIndex.commited()
 	if idx == 0 {
 		return nil
 	}

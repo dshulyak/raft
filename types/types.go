@@ -29,18 +29,20 @@ type RequestVoteResponse struct {
 }
 
 type AppendEntries struct {
-	Term     uint64
-	Leader   NodeID
-	PrevLog  LogHeader
-	Commited uint64
-	Entries  []*raftlog.LogEntry
+	Term      uint64
+	Leader    NodeID
+	PrevLog   LogHeader
+	Commited  uint64
+	ReadIndex uint64
+	Entries   []*raftlog.LogEntry
 }
 
 type AppendEntriesResponse struct {
-	Term     uint64
-	Follower NodeID
-	Success  bool
-	LastLog  LogHeader
+	Term      uint64
+	Follower  NodeID
+	Success   bool
+	LastLog   LogHeader
+	ReadIndex uint64
 }
 
 type Node struct {
