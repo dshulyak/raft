@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
 
@@ -15,11 +16,11 @@ type msgPipeline func(NodeID, Message)
 
 func newStreamHandler(ctx context.Context, logger *zap.Logger, push msgPipeline) *streamHandler {
 	return &streamHandler{
-		ctx:       ctx,
-		logger:    logger.Sugar(),
-		push:      push,
-		messages:  map[NodeID]chan Message{},
-		connected: map[NodeID]struct{}{},
+		ctx:      ctx,
+		logger:   logger.Sugar(),
+		push:     push,
+		messages: map[NodeID]chan Message{},
+		sema:     map[NodeID]chan struct{}{},
 	}
 }
 
@@ -30,33 +31,7 @@ type streamHandler struct {
 
 	mu       sync.Mutex
 	messages map[NodeID]chan Message
-	// in current protocol there is no need for more than 1 stream
-	// if two peers will concurrently initiate connections we will end up with more.
-	// if connection already exists in this map abandon it.
-	connected map[NodeID]struct{}
-}
-
-func (p *streamHandler) registerConnection(id NodeID) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_, exist := p.connected[id]
-	if exist {
-		return false
-	}
-	p.logger.Debugw("established connection", "peer", id)
-	p.connected[id] = struct{}{}
-	return true
-}
-
-func (p *streamHandler) unregisterConnection(id NodeID) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_, exist := p.connected[id]
-	if !exist {
-		return
-	}
-	p.logger.Debugw("closed connection", "peer", id)
-	delete(p.connected, id)
+	sema     map[NodeID]chan struct{}
 }
 
 func (p *streamHandler) reader(stream MsgStream) error {
@@ -69,7 +44,18 @@ func (p *streamHandler) reader(stream MsgStream) error {
 	}
 }
 
-func (p *streamHandler) getSender(id NodeID) chan Message {
+func (p *streamHandler) getSema(id NodeID) chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sema, exist := p.sema[id]
+	if !exist {
+		sema = make(chan struct{}, 1)
+		p.sema[id] = sema
+	}
+	return sema
+}
+
+func (p *streamHandler) getOutbound(id NodeID) chan Message {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	sender, exist := p.messages[id]
@@ -80,19 +66,38 @@ func (p *streamHandler) getSender(id NodeID) chan Message {
 	return sender
 }
 
-func (p *streamHandler) removeSender(id NodeID) {
+func (p *streamHandler) removeOutbound(id NodeID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.messages, id)
+	delete(p.sema, id)
 }
 
-func (p *streamHandler) writer(stream MsgStream) error {
-	sender := p.getSender(stream.ID())
+// writer prevents multiple streams from accessing outbound message channel
+// at the same time. while it is fine for multiple readers to exist:
+// - one stream may read RequestVote/AppendEntries requests
+// - another will download snapshot
+// multiple writers are not order preserving which won't break but will
+// negatively affect protocol.
+func (p *streamHandler) writer(stream MsgStream, closer chan struct{}) error {
+	var (
+		outbound chan types.Message
+		sema     = p.getSema(stream.ID())
+	)
+	defer func() {
+		if outbound != nil {
+			<-sema
+		}
+	}()
 	for {
 		select {
-		case <-p.ctx.Done():
+		case sema <- struct{}{}:
+			outbound = p.getOutbound(stream.ID())
+		case <-closer:
 			return nil
-		case msg := <-sender:
+		case <-p.ctx.Done():
+			return ErrStopped
+		case msg := <-outbound:
 			err := stream.Send(msg)
 			if err != nil {
 				return err
@@ -102,15 +107,10 @@ func (p *streamHandler) writer(stream MsgStream) error {
 }
 
 func (p *streamHandler) handle(stream MsgStream) {
-	if !p.registerConnection(stream.ID()) {
-		stream.Close()
-		return
-	}
-	defer p.unregisterConnection(stream.ID())
-
 	var wg sync.WaitGroup
 	wg.Add(2)
 	errc := make(chan error, 2)
+	closer := make(chan struct{})
 	go func() {
 		err := p.reader(stream)
 		p.logger.Debugw("reader finished", "peer", stream.ID(), "error", err)
@@ -118,15 +118,18 @@ func (p *streamHandler) handle(stream MsgStream) {
 		wg.Done()
 	}()
 	go func() {
-		err := p.writer(stream)
+		err := p.writer(stream, closer)
 		p.logger.Debugw("writer finished", "peer", stream.ID(), "error", err)
 		errc <- err
 		wg.Done()
 	}()
 
 	for err := range errc {
-		if err != nil && !errors.Is(err, io.EOF) {
-			stream.Close()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				stream.Close()
+			}
+			close(closer)
 			break
 		}
 	}

@@ -310,14 +310,8 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		u.Updated = true
 	}
 	f.resetTicks()
-	f.logger.Debugw("append entries",
-		"leader", msg.Leader,
-		"count", len(msg.Entries),
-		"replica", f.id,
-		"prev log term", msg.PrevLog.Term,
-		"prev log index", msg.PrevLog.Index,
-		"heartbeat", len(msg.Entries) == 0,
-	)
+	f.logger.Debugw("append entries", "msg", msg)
+
 	empty := f.log.IsEmpty()
 	if empty && msg.PrevLog.Index > 0 {
 		f.send(u, &AppendEntriesResponse{
@@ -392,6 +386,11 @@ func min(i, j uint64) uint64 {
 }
 
 func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
+	if f.Term < msg.Term {
+		f.Term = msg.Term
+		f.VotedFor = None
+		f.must(f.Sync(), "failed to sync durable state")
+	}
 	var grant bool
 	if msg.Term < f.Term {
 		grant = false
@@ -572,18 +571,18 @@ type leader struct {
 
 	inflight *list.List
 
+	// last confirmed applied index
 	appliedIndex uint64
-	readIndex    uint64
-	acked        uint64
-	ackedRead    *match
-	reads        *list.List
-}
-
-func (l *leader) resetReadsIndex(index uint64) {
-	for front := l.reads.Front(); front != nil; front = front.Next() {
-		rr := front.Value.(*readReq)
-		rr.readIndex = index
-	}
+	// logical clock. incremented each time raft receives next batch of read requests
+	// required to establish causality between AppendEntries and AppendEntriesResponse
+	// because communication is generally asynchronous
+	readIndex uint64
+	// last acknowledged read index
+	acked uint64
+	// acknolwdged read index by each node
+	ackedRead *match
+	// list of pending read requsts.similar to inflight list.
+	reads *list.List
 }
 
 func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
@@ -601,12 +600,8 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 			// by the follower by default
 			if msg.ReadIndex == 0 {
 				l.readIndex++
-				// wraparound null
-				if l.readIndex == 0 {
-					l.readIndex++
-					l.ackedRead.reset()
-					l.resetReadsIndex(l.readIndex)
-				}
+				// TODO there is a possibility of the overflow
+				// if leader remains stable for more than 1<<64-2 reads
 				msg.ReadIndex = l.readIndex
 			}
 			l.reads.PushBack(&readReq{
@@ -625,6 +620,9 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 			"index", entry, "term", entry)
 		l.must(l.log.Append(entry), "failed to append a record")
 		_ = l.inflight.PushBack(proposal)
+	}
+	if msg.ReadIndex == 0 {
+		msg.ReadIndex = l.readIndex
 	}
 	if len(msg.Entries) > 0 {
 		l.prevLog.Index = msg.Entries[len(msg.Entries)-1].Index
@@ -688,7 +686,7 @@ func (l *leader) commitInflight(u *Update, idx uint64) {
 	for front := l.inflight.Front(); front != nil; {
 		proposal := front.Value.(*Proposal)
 		if proposal.Entry.Index > idx {
-			return
+			break
 		} else {
 			u.Updated = true
 			u.Proposals = append(u.Proposals, proposal)
@@ -697,6 +695,8 @@ func (l *leader) commitInflight(u *Update, idx uint64) {
 			l.inflight.Remove(prev)
 		}
 	}
+	// update commit index everywhere
+	l.sendProposals(u)
 }
 
 func (l *leader) next(msg interface{}, u *Update) role {
@@ -724,8 +724,7 @@ func (l *leader) next(msg interface{}, u *Update) role {
 	case *AppendEntriesResponse:
 		if m.Term < l.Term {
 			return nil
-		}
-		if m.Term > l.Term {
+		} else if m.Term > l.Term {
 			return l.stepdown(m.Term, u)
 		}
 		return l.onAppendEntriesResponse(m, u)
@@ -738,9 +737,12 @@ func (l *leader) next(msg interface{}, u *Update) role {
 }
 
 func (l *leader) completePendingReads(u *Update) {
+	if !l.recentlyCommited {
+		return
+	}
 	for front := l.reads.Front(); front != nil; {
 		rr := front.Value.(*readReq)
-		if l.recentlyCommited && l.appliedIndex >= rr.commitIndex && rr.readIndex <= l.acked {
+		if l.appliedIndex >= rr.commitIndex && rr.readIndex <= l.acked {
 			rr.proposal.Complete(nil)
 			prev := front
 			front = front.Next()
@@ -752,13 +754,6 @@ func (l *leader) completePendingReads(u *Update) {
 }
 
 func (l *leader) updateReadIndex(follower NodeID, index uint64, u *Update) {
-	// if read index was recently wrapped and we received
-	// response with the index before the wrapping such index will be ignored
-	// 1_000_000 is a quite generous, as it is incremented only once per message
-	// so 1_000_000 will have to be buffered somewhere to break this assumption
-	if l.readIndex < 1_000_000 && index > l.readIndex {
-		return
-	}
 	if !l.ackedRead.update(follower, index) {
 		return
 	}

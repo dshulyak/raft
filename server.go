@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"math/rand"
+
 	"go.uber.org/zap"
 )
 
@@ -27,6 +29,9 @@ func newServer(global *Config, ctx context.Context, protocol handler) *server {
 		protocol:    protocol,
 		connectors:  map[NodeID]*connector{},
 		connected:   map[NodeID]struct{}{},
+	}
+	if srv.backoff == 0 {
+		srv.backoff = 200 * time.Millisecond
 	}
 	global.Transport.HandleStream(func(stream MsgStream) {
 		srv.accept(stream.ID(), stream)
@@ -121,14 +126,16 @@ func (s *server) Remove(id NodeID) {
 
 func (s *server) accept(id NodeID, stream MsgStream) {
 	go func() {
-		// only one goroutine is suppose to call dial
+		// only one goroutine is suppose to dial
 		// this is enforced by an owner boolean, the first g that updates
 		// the connection is an owner and it shouldn't exit until a connector
 		// is removed from a server
 		for {
 			owner := s.setConnected(id)
 			if stream != nil {
+				s.logger.Debugw("stream passed to the protocol", "peer", stream.ID())
 				s.protocol(stream)
+				s.logger.Debugw("protocol exited", "peer", stream.ID())
 			}
 			if owner {
 				s.removeConnected(id)
@@ -192,7 +199,9 @@ func (d *connector) dial() (MsgStream, error) {
 
 func (d *connector) dialWithBackoff() (MsgStream, error) {
 	if d.doBackoff && d.backoff > 0 {
-		timer := time.NewTimer(d.backoff)
+		// potentially doubled
+		backoff := time.Duration(rand.Int63n(int64(d.backoff))) + d.backoff
+		timer := time.NewTimer(backoff)
 		defer timer.Stop()
 		select {
 		case <-d.ctx.Done():

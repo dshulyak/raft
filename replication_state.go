@@ -117,6 +117,10 @@ func (p *replicationState) next() *AppendEntries {
 			p.logger.Panicw("failed to get entry", "index", nextIndex, "error", err)
 		}
 		entries[i] = &entry
+		if entry.Index != uint64(nextIndex) {
+			p.logger.Errorw("unexepected index for returned entry", "expected", nextIndex, "got", entry)
+			panic("index is corrupted")
+		}
 		nextIndex++
 	}
 
@@ -124,7 +128,7 @@ func (p *replicationState) next() *AppendEntries {
 		p.sentLog.Index = entries[d-1].Index
 		p.sentLog.Term = entries[d-1].Term
 	}
-	return &AppendEntries{
+	msg := &AppendEntries{
 		Term:      p.term,
 		Leader:    p.id,
 		PrevLog:   prevLog,
@@ -132,6 +136,8 @@ func (p *replicationState) next() *AppendEntries {
 		Entries:   entries,
 		ReadIndex: p.readIndex,
 	}
+	p.logger.Debugw("next message to replicate", "msg", msg, "sent", p.sentLog)
+	return msg
 }
 
 // onResponse receives AppendEntriesResponse's from the peer and adjusts
@@ -140,6 +146,7 @@ func (p *replicationState) onResponse(m *AppendEntriesResponse) {
 	if m.Term != p.term {
 		return
 	}
+	p.logger.Debugw("replication channel received response", "msg", m)
 	if m.Success {
 		p.pipeline = true
 		p.prevLog = m.LastLog
@@ -185,9 +192,11 @@ func (p *replicationState) update(m1, m2 *AppendEntries) *AppendEntries {
 		return m1
 	}
 	if len(m2.Entries) > 0 {
+		p.heartbeat = p.heartbeatTimeout
 		last := m2.Entries[len(m2.Entries)-1]
 		p.sentLog.Index = last.Index
 		p.sentLog.Term = last.Term
+		return m2
 	}
-	return m2
+	return nil
 }

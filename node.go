@@ -161,7 +161,7 @@ func (n *Node) sendMessages(u *Update) {
 			box = &peerMailbox{
 				ctx:   n.ctx,
 				group: n.group,
-				mail:  n.streams.getSender(msg.To),
+				mail:  n.streams.getOutbound(msg.To),
 			}
 			n.mailboxes[msg.To] = box
 		}
@@ -283,6 +283,8 @@ func (n *Node) run() (err error) {
 			err = n.raft.Next(msg)
 		case count := <-timeout:
 			err = n.raft.Tick(count)
+		case applied := <-n.app.applied():
+			n.raft.Applied(applied)
 		case appC <- app:
 			app = nil
 		}
