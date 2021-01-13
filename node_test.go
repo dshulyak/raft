@@ -121,11 +121,21 @@ func (c *nodeCluster) blockLeader() {
 
 func (c *nodeCluster) propose(ctx context.Context, op []byte) error {
 	c.nextLeader(None)
+	var (
+		proposal ReadRequest
+		err      error
+	)
 	for {
 		leader := c.knownLeader()
 		n := c.nodes[leader]
 		c.logger.Debugw("proposed to a leader", "leader", leader)
-		proposal, err := n.Propose(ctx, op)
+
+		if op != nil {
+			proposal, err = n.Propose(ctx, op)
+		} else {
+			proposal, err = n.Read(ctx)
+		}
+
 		if err != nil {
 			c.nextLeader(leader)
 			return err
@@ -228,5 +238,52 @@ func TestNodeLeaderPartitioned(t *testing.T) {
 			defer cancel()
 			return c.propose(ctx, op)
 		}))
+	}
+}
+
+func TestNodeReadWithoutLog(t *testing.T) {
+	c := newNodeCluster(t, 3)
+	closer := make(chan struct{})
+	n := 10
+	key := uint64(1)
+	var value uint64
+	go func() {
+		for i := 1; i <= n; i++ {
+			op, err := c.encoder.Insert(key, i)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			require.NoError(t, c.propose(ctx, op))
+			cancel()
+
+			atomic.StoreUint64(&value, uint64(i))
+		}
+		close(closer)
+	}()
+
+	for {
+		select {
+		case <-closer:
+			return
+		default:
+		}
+		// FIXME this is not a very good test. it will pass even if read requests
+		// completed prematurely.
+		// this value is updated only after write request receives notification
+		// that the entry is applied.
+		// for a better test we need to get here the value that was commited
+		// but not necessarily applied.
+		applied := atomic.LoadUint64(&value)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		require.NoError(t, c.propose(ctx, nil), "read timed out")
+		cancel()
+
+		value, set := c.apps[c.knownLeader()].Get(key)
+		if applied > 0 {
+			require.True(t, set)
+		}
+		if set {
+			require.GreaterOrEqual(t, value.(int), int(applied))
+		}
 	}
 }

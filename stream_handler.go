@@ -113,13 +113,11 @@ func (p *streamHandler) handle(stream MsgStream) {
 	closer := make(chan struct{})
 	go func() {
 		err := p.reader(stream)
-		p.logger.Debugw("reader finished", "peer", stream.ID(), "error", err)
 		errc <- err
 		wg.Done()
 	}()
 	go func() {
 		err := p.writer(stream, closer)
-		p.logger.Debugw("writer finished", "peer", stream.ID(), "error", err)
 		errc <- err
 		wg.Done()
 	}()

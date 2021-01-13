@@ -67,10 +67,11 @@ func (p *replicationState) tick(n int) {
 func (p *replicationState) sendHeartbeat() *AppendEntries {
 	p.heartbeat = p.heartbeatTimeout
 	return &AppendEntries{
-		Term:     p.term,
-		Leader:   p.id,
-		PrevLog:  p.sentLog,
-		Commited: p.commitLogIndex,
+		Term:      p.term,
+		Leader:    p.id,
+		PrevLog:   p.sentLog,
+		Commited:  p.commitLogIndex,
+		ReadIndex: p.readIndex,
 	}
 }
 

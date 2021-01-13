@@ -637,6 +637,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 
 func (l *leader) applied(applied uint64, u *Update) {
 	if applied > l.appliedIndex {
+		l.logger.Debugw("applied index is updated", "applied", applied)
 		l.appliedIndex = applied
 		l.completePendingReads(u)
 	}

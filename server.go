@@ -134,7 +134,6 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 			owner := s.setConnected(id)
 			if stream != nil {
 				s.protocol(stream)
-				s.logger.Debugw("protocol exited", "peer", stream.ID())
 			}
 			if owner {
 				s.removeConnected(id)
