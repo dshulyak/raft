@@ -80,7 +80,7 @@ func (r *replicationChannel) Run() (err error) {
 			return
 		case n := <-timeout:
 			r.peer.tick(n)
-			if next == nil {
+			if initialized && next == nil {
 				next = r.peer.next()
 			}
 		case msg := <-r.in:

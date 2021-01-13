@@ -59,6 +59,8 @@ func TestPeerReplicationOutdated(t *testing.T) {
 		require.NoError(t, log.Append(entry))
 		entries = append(entries, entry)
 	}
+	require.NoError(t, log.Sync())
+
 	msg := &AppendEntries{
 		Term:    1,
 		Leader:  peerID,

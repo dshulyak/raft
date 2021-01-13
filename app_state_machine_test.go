@@ -126,6 +126,7 @@ func TestApplyLogs(t *testing.T) {
 			},
 		))
 	}
+	require.NoError(t, storage.Sync())
 
 	select {
 	case <-time.After(time.Second):

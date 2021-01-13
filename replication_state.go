@@ -1,8 +1,6 @@
 package raft
 
 import (
-	"errors"
-
 	"github.com/dshulyak/raftlog"
 	"go.uber.org/zap"
 )
@@ -19,10 +17,6 @@ func newReplicationState(
 		heartbeatTimeout: heartbeatTimeout,
 		log:              log,
 	}
-	last := peer.lastLog()
-	peer.prevLog.Index = last.Index
-	peer.prevLog.Term = last.Term
-	peer.sentLog = peer.prevLog
 	return peer
 }
 
@@ -58,20 +52,10 @@ type replicationState struct {
 	commitLogIndex uint64
 	readIndex      uint64
 
+	lastLog LogHeader
+
 	prevLog, sentLog LogHeader
 	log              *raftlog.Storage
-}
-
-func (p *replicationState) lastLog() raftlog.LogEntry {
-	// FIXME make sure that fetching last log doesn't hit the disk
-	entry, err := p.log.Last()
-	if errors.Is(err, raftlog.ErrEmptyLog) {
-		return entry
-	}
-	if err != nil {
-		p.logger.Panicw("failed to get last log", "error", err)
-	}
-	return entry
 }
 
 // tick updates heartbeat timeout.
@@ -92,8 +76,7 @@ func (p *replicationState) sendHeartbeat() *AppendEntries {
 
 // next selects next in-order batch of entries to append or heartbeat if logs are up to date.
 func (p *replicationState) next() *AppendEntries {
-	last := p.lastLog()
-	if p.sentLog.Index >= last.Index {
+	if p.sentLog.Index >= p.lastLog.Index {
 		if p.heartbeat <= 0 {
 			return p.sendHeartbeat()
 		}
@@ -105,12 +88,15 @@ func (p *replicationState) next() *AppendEntries {
 	p.heartbeat = p.heartbeatTimeout
 
 	var (
-		d         = min(last.Index-p.sentLog.Index, p.maxEntries)
+		d         = min(p.lastLog.Index-p.sentLog.Index, p.maxEntries)
 		entries   = make([]*raftlog.LogEntry, d)
 		prevLog   = p.sentLog
 		nextIndex = int(p.sentLog.Index) + 1
 	)
 
+	p.logger.Debugw("replicate next batch of entries", "next", nextIndex,
+		"count", d,
+		"last log", p.lastLog)
 	for i := 0; i < int(d); i++ {
 		entry, err := p.log.Get(nextIndex - 1)
 		if err != nil {
@@ -173,6 +159,7 @@ func (p *replicationState) init(m *AppendEntries) {
 	p.term = m.Term
 	p.prevLog = m.PrevLog
 	p.sentLog = m.PrevLog
+	p.lastLog = m.PrevLog
 	p.commitLogIndex = m.Commited
 	p.readIndex = m.ReadIndex
 }
@@ -187,16 +174,21 @@ func (p *replicationState) update(m1, m2 *AppendEntries) *AppendEntries {
 	}
 	p.commitLogIndex = m2.Commited
 	p.readIndex = m2.ReadIndex
+	if len(m2.Entries) > 0 {
+		last := m2.Entries[len(m2.Entries)-1]
+		p.lastLog.Index = last.Index
+		p.lastLog.Term = last.Term
+	}
 	if m1 != nil {
 		// never modify m1 without copying it first
 		return m1
 	}
+	p.heartbeat = p.heartbeatTimeout
 	if len(m2.Entries) > 0 {
-		p.heartbeat = p.heartbeatTimeout
 		last := m2.Entries[len(m2.Entries)-1]
 		p.sentLog.Index = last.Index
 		p.sentLog.Term = last.Term
 		return m2
 	}
-	return nil
+	return m2
 }

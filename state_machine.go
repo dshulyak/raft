@@ -617,7 +617,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		msg.Entries = append(msg.Entries, entry)
 		l.nextLogIndex++
 		l.logger.Debugw("append entry on a leader and send proposal",
-			"index", entry, "term", entry)
+			"index", entry.Index, "term", entry.Term)
 		l.must(l.log.Append(entry), "failed to append a record")
 		_ = l.inflight.PushBack(proposal)
 	}
@@ -628,6 +628,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		l.prevLog.Index = msg.Entries[len(msg.Entries)-1].Index
 		l.prevLog.Term = l.Term
 		l.matchIndex.update(l.id, l.prevLog.Index)
+		l.must(l.log.Sync(), "failed to sync the log")
 	}
 	l.send(u, msg)
 }
@@ -746,7 +747,7 @@ func (l *leader) completePendingReads(u *Update) {
 			rr.proposal.Complete(nil)
 			prev := front
 			front = front.Next()
-			l.inflight.Remove(prev)
+			l.reads.Remove(prev)
 		} else {
 			return
 		}
@@ -791,7 +792,6 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	if entry.Term != l.Term {
 		return nil
 	}
-	l.must(l.log.Sync(), "failed to sync the log")
 	l.commit(u, idx)
 	l.commitInflight(u, idx)
 	return nil

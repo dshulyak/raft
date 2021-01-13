@@ -133,7 +133,6 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 		for {
 			owner := s.setConnected(id)
 			if stream != nil {
-				s.logger.Debugw("stream passed to the protocol", "peer", stream.ID())
 				s.protocol(stream)
 				s.logger.Debugw("protocol exited", "peer", stream.ID())
 			}
@@ -145,13 +144,10 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 
 			conn := s.getConnector(id)
 			if conn != nil {
-				s.logger.Debugw("dialing to a peer", "peer", id)
 				var err error
 				stream, err = conn.dialWithBackoff()
-				if err != nil {
-					s.logger.Debugw("dial to a peer failed", "peer", id, "error", err)
-				} else {
-					s.logger.Debugw("dial finished", "peer", id)
+				if errors.Is(err, context.Canceled) {
+					return
 				}
 			} else {
 				return

@@ -91,6 +91,8 @@ type testCluster struct {
 	states        map[NodeID]*stateMachine
 	messages      []interface{}
 	blockedRoutes map[NodeID]map[NodeID]struct{}
+
+	proposals []*Proposal
 }
 
 func (t *testCluster) restart(id NodeID) {
@@ -169,6 +171,7 @@ func (c *testCluster) run(t TestingHelper, u *Update, from NodeID) *Update {
 		if u == nil {
 			continue
 		}
+		c.proposals = append(c.proposals, u.Proposals...)
 		for _, msg := range u.Msgs {
 			if c.isBlocked(from, msg.To) {
 				continue
@@ -219,9 +222,6 @@ func testReplicationAfterElection(t *testing.T, term uint64) {
 	}
 	update = cluster.run(t, update, 1)
 	require.NotNil(t, update)
-	require.Len(t, update.Proposals, 1)
-	entry := update.Proposals[0].Entry
-	require.Equal(t, raftlog.LogNoop, entry.OpType)
 	cluster.compareMsgHistories(t, []interface{}{
 		&RequestVote{
 			Term:      term,
@@ -250,6 +250,30 @@ func testReplicationAfterElection(t *testing.T, term uint64) {
 			Term:    term,
 			Leader:  1,
 			Entries: []*raftlog.LogEntry{{Index: 1, Term: term, OpType: raftlog.LogNoop}},
+		},
+		&AppendEntriesResponse{
+			Term:     term,
+			Follower: 2,
+			Success:  true,
+			LastLog:  LogHeader{Index: 1, Term: term},
+		},
+		&AppendEntriesResponse{
+			Term:     term,
+			Follower: 3,
+			Success:  true,
+			LastLog:  LogHeader{Index: 1, Term: term},
+		},
+		&AppendEntries{
+			Term:     term,
+			Leader:   1,
+			Commited: 1,
+			PrevLog:  LogHeader{Index: 1, Term: term},
+		},
+		&AppendEntries{
+			Term:     term,
+			Leader:   1,
+			Commited: 1,
+			PrevLog:  LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntriesResponse{
 			Term:     term,
@@ -352,6 +376,30 @@ func TestRaftLeaderDisrupted(t *testing.T) {
 			Success:  true,
 			LastLog:  LogHeader{Index: 2, Term: 2},
 		},
+		&AppendEntries{
+			Term:     2,
+			Leader:   2,
+			Commited: 2,
+			PrevLog:  LogHeader{Index: 2, Term: 2},
+		},
+		&AppendEntries{
+			Term:     2,
+			Leader:   2,
+			Commited: 2,
+			PrevLog:  LogHeader{Index: 2, Term: 2},
+		},
+		&AppendEntriesResponse{
+			Term:     2,
+			Follower: 1,
+			Success:  true,
+			LastLog:  LogHeader{Index: 2, Term: 2},
+		},
+		&AppendEntriesResponse{
+			Term:     2,
+			Follower: 3,
+			Success:  true,
+			LastLog:  LogHeader{Index: 2, Term: 2},
+		},
 	})
 }
 
@@ -399,6 +447,30 @@ func TestRaftCandidateTransitionToFollower(t *testing.T) {
 			Success:  true,
 			LastLog:  LogHeader{Index: 1, Term: 1},
 		},
+		&AppendEntries{
+			Term:     1,
+			Leader:   2,
+			Commited: 1,
+			PrevLog:  LogHeader{Index: 1, Term: 1},
+		},
+		&AppendEntries{
+			Term:     1,
+			Leader:   2,
+			Commited: 1,
+			PrevLog:  LogHeader{Index: 1, Term: 1},
+		},
+		&AppendEntriesResponse{
+			Term:     1,
+			Follower: 1,
+			Success:  true,
+			LastLog:  LogHeader{Index: 1, Term: 1},
+		},
+		&AppendEntriesResponse{
+			Term:     1,
+			Follower: 3,
+			Success:  true,
+			LastLog:  LogHeader{Index: 1, Term: 1},
+		},
 	})
 }
 
@@ -407,9 +479,9 @@ func TestRaftReplicatonWithMajority(t *testing.T) {
 	cluster.blockRoute(1, 4)
 	cluster.blockRoute(1, 5)
 
-	update := cluster.run(t, cluster.triggerTimeout(1), 1)
-	require.Len(t, update.Proposals, 1)
-	require.Equal(t, raftlog.LogNoop, update.Proposals[0].Entry.OpType)
+	cluster.run(t, cluster.triggerTimeout(1), 1)
+	require.Len(t, cluster.proposals, 1)
+	require.Equal(t, raftlog.LogNoop, cluster.proposals[0].Entry.OpType)
 }
 
 func TestRaftProposalReplication(t *testing.T) {
@@ -417,16 +489,15 @@ func TestRaftProposalReplication(t *testing.T) {
 	_ = cluster.run(t, cluster.triggerTimeout(1), 1)
 	cluster.resetHistory()
 
-	update := cluster.run(t, cluster.propose(1, &raftlog.LogEntry{OpType: raftlog.LogApplication}), 1)
-	require.NotNil(t, update)
-	require.Len(t, update.Proposals, 1)
-	require.Equal(t, raftlog.LogApplication, update.Proposals[0].Entry.OpType)
+	cluster.run(t, cluster.propose(1, &raftlog.LogEntry{OpType: raftlog.LogApplication}), 1)
+	require.Len(t, cluster.proposals, 2)
+	require.Equal(t, raftlog.LogNoop, cluster.proposals[0].Entry.OpType)
+	require.Equal(t, raftlog.LogApplication, cluster.proposals[1].Entry.OpType)
 }
 
 func TestRaftLogClean(t *testing.T) {
 	cluster := getTestCluster(t, 3, 0, 1)
-	update := cluster.run(t, cluster.triggerTimeout(1), 1)
-	require.Len(t, update.Proposals, 1)
+	cluster.run(t, cluster.triggerTimeout(1), 1)
 
 	for i := 1; i <= cluster.size(); i++ {
 		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2})
@@ -436,8 +507,7 @@ func TestRaftLogClean(t *testing.T) {
 
 func TestRaftLogOverwrite(t *testing.T) {
 	cluster := getTestCluster(t, 3, 0, 1)
-	update := cluster.run(t, cluster.triggerTimeout(1), 1)
-	require.Len(t, update.Proposals, 1)
+	cluster.run(t, cluster.triggerTimeout(1), 1)
 
 	for i := 1; i <= cluster.size(); i++ {
 		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2, PrevLog: LogHeader{Index: 1}})
