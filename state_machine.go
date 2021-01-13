@@ -600,8 +600,10 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 			// by the follower by default
 			if msg.ReadIndex == 0 {
 				l.readIndex++
-				// TODO there is a possibility of the overflow
-				// if leader remains stable for more than 1<<64-2 reads
+				// overflow if leader remains stable for more than 1<<64-2 reads
+				if l.readIndex == 0 {
+					panic("read index overflow")
+				}
 				msg.ReadIndex = l.readIndex
 			}
 			l.reads.PushBack(&readReq{

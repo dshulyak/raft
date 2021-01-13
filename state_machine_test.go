@@ -1,12 +1,16 @@
 package raft
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raftlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,8 +131,13 @@ func (t *testCluster) size() int {
 	return len(t.states)
 }
 
-func (t *testCluster) propose(id NodeID, entry *raftlog.LogEntry) *Update {
-	require.NoError(t.t, t.states[id].Next(&Proposal{Entry: entry}))
+func (t *testCluster) propose(id NodeID, proposal *Proposal) *Update {
+	require.NoError(t.t, t.states[id].Next(proposal))
+	return t.states[id].Update()
+}
+
+func (t *testCluster) applied(id NodeID, applied uint64) *Update {
+	t.states[id].Applied(applied)
 	return t.states[id].Update()
 }
 
@@ -489,7 +498,7 @@ func TestRaftProposalReplication(t *testing.T) {
 	_ = cluster.run(t, cluster.triggerTimeout(1), 1)
 	cluster.resetHistory()
 
-	cluster.run(t, cluster.propose(1, &raftlog.LogEntry{OpType: raftlog.LogApplication}), 1)
+	cluster.run(t, cluster.propose(1, &Proposal{Entry: &raftlog.LogEntry{OpType: raftlog.LogApplication}}), 1)
 	require.Len(t, cluster.proposals, 2)
 	require.Equal(t, raftlog.LogNoop, cluster.proposals[0].Entry.OpType)
 	require.Equal(t, raftlog.LogApplication, cluster.proposals[1].Entry.OpType)
@@ -513,6 +522,30 @@ func TestRaftLogOverwrite(t *testing.T) {
 		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2, PrevLog: LogHeader{Index: 1}})
 		require.True(t, cluster.logs[NodeID(i)].IsEmpty())
 	}
+}
+
+func TestRaftReads(t *testing.T) {
+	cluster := getTestCluster(t, 3, 0, 1)
+	leader := NodeID(1)
+	cluster.run(t, cluster.triggerTimeout(leader), leader)
+	rr1 := types.NewReadRequest(context.Background())
+	u1 := cluster.propose(leader, rr1)
+	rr2 := types.NewReadRequest(context.Background())
+	u2 := cluster.propose(leader, rr2)
+
+	cluster.applied(leader, 1)
+	// this update carries a message with readIndex=1
+	cluster.run(t, u1, leader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	require.NoError(t, rr1.Wait(ctx))
+	require.True(t, errors.Is(rr2.Wait(ctx), context.DeadlineExceeded))
+
+	cluster.run(t, u2, leader)
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	require.NoError(t, rr2.Wait(ctx))
 }
 
 type rapidCleanup struct {
@@ -586,7 +619,7 @@ func (c *clusterMachine) Propose(t *rapid.T) {
 	if c.state.leader == None {
 		t.Skip("leader is not yet elected")
 	}
-	update := c.cluster.propose(c.state.leader, &raftlog.LogEntry{OpType: raftlog.LogApplication})
+	update := c.cluster.propose(c.state.leader, &Proposal{Entry: &raftlog.LogEntry{OpType: raftlog.LogApplication}})
 	update = c.cluster.run(c.cleanup, update, c.state.leader)
 	if update != nil && update.Commit != 0 {
 		c.state.commit = update.Commit
