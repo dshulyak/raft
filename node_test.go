@@ -54,8 +54,8 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 
 	template := &Config{
 		EntriesPerAppend:       1,
-		ProposalsBuffer:        2,
-		PendingProposalsBuffer: 10,
+		ProposalsBuffer:        100,
+		PendingProposalsBuffer: 100,
 		Backoff:                100 * time.Millisecond,
 		TickInterval:           20 * time.Millisecond,
 		HeartbeatTimeout:       3,
