@@ -1,7 +1,7 @@
 package raft
 
 import (
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 	"go.uber.org/zap"
 )
 

@@ -3,7 +3,7 @@ package types
 import (
 	"context"
 
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 )
 
 type Transport interface {

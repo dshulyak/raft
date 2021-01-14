@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 )
 
 type NodeID uint64

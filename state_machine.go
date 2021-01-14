@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/types"
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 	"go.uber.org/zap"
 )
 
@@ -606,11 +606,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 				}
 				msg.ReadIndex = l.readIndex
 			}
-			l.reads.PushBack(&readReq{
-				proposal:    proposal,
-				commitIndex: l.commitIndex,
-				readIndex:   l.readIndex,
-			})
+			proposal.Complete(nil)
 			continue
 		}
 		entry := proposal.Entry

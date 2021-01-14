@@ -3,7 +3,7 @@ package raft
 import (
 	"testing"
 
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 	"github.com/stretchr/testify/require"
 )
 

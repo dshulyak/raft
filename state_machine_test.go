@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/types"
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"

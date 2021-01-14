@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/types"
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )

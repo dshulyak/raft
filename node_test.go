@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/chant"
-	"github.com/dshulyak/raftlog"
+	"github.com/dshulyak/raft/raftlog"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
