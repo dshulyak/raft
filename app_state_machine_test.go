@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -160,5 +160,7 @@ func TestApplyLogs(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	require.NoError(t, proposal.Wait(ctx))
+	result, err := proposal.WaitResult(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, true, result)
 }

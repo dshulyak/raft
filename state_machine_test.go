@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -540,7 +540,8 @@ func TestRaftReads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	require.NoError(t, rr1.Wait(ctx))
-	require.True(t, errors.Is(rr2.Wait(ctx), context.DeadlineExceeded))
+	err := rr2.Wait(ctx)
+	require.True(t, errors.Is(err, context.DeadlineExceeded), err)
 
 	cluster.run(t, u2, leader)
 	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)

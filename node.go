@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -78,34 +78,34 @@ type appUpdate struct {
 // err := wr.Wait(ctx)
 // If error is nil wr.Result() will return an opaque interface{}. It is the same object
 // returned by the Apply method of the App interface.
-func NewNode(global *Config) *Node {
+func NewNode(conf *Config) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 	group, ctx := errgroup.WithContext(ctx)
 	n := &Node{
-		global:       global,
-		logger:       global.Logger.Sugar(),
+		global:       conf,
+		logger:       conf.Logger.Sugar(),
 		ctx:          ctx,
 		cancel:       cancel,
 		group:        group,
 		closeC:       make(chan error, 1),
-		tick:         global.TickInterval,
-		maxProposals: global.ProposalsBuffer,
+		tick:         conf.TickInterval,
+		maxProposals: conf.ProposalsBuffer,
 		mailboxes:    map[NodeID]*peerMailbox{},
 		messages:     make(chan Message, 1),
 		// proposals are buffered until node is ready to process them
 		proposals: make(chan *Proposal),
 	}
 	n.raft = newStateMachine(
-		global.Logger,
-		global.ID,
-		global.ElectionTimeoutMin, global.ElectionTimeoutMax,
-		global.Configuration,
-		global.Storage,
-		global.State,
+		conf.Logger,
+		conf.ID,
+		conf.ElectionTimeoutMin, conf.ElectionTimeoutMax,
+		conf.Configuration,
+		conf.Storage,
+		conf.State,
 	)
-	n.app = newAppStateMachine(ctx, global, n.group)
-	n.streams = newStreamHandler(ctx, global.Logger, n.msgPipeline)
-	n.server = newServer(global, ctx, n.streams.handle)
+	n.app = newAppStateMachine(ctx, conf, n.group)
+	n.streams = newStreamHandler(ctx, conf.Logger, n.msgPipeline)
+	n.server = newServer(conf, ctx, n.streams.handle)
 	n.group.Go(n.run)
 	go func() {
 		<-ctx.Done()
@@ -194,11 +194,20 @@ func (n *Node) msgPipeline(id NodeID, msg Message) {
 }
 
 type WriteRequest interface {
-	ReadRequest
-	Result() interface{}
+	// Wait completes when the entry is commited.
+	// Or with error if:
+	// - leader has stepped down
+	// - queue overflow
+	// - redirect to a new leader
+	Wait(context.Context) error
+	// WaitResult completes when the entry is applied.
+	// Will not complete succesfully if Wait failed.
+	WaitResult(context.Context) (interface{}, error)
 }
 
 type ReadRequest interface {
+	// Wait completes when read is safe to execute.
+	// Otherwise may fail with same reasons as WriteRequest.
 	Wait(context.Context) error
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -104,8 +104,7 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 			a.logger.Debugw("applying entry", "index", entry.Index, "term", entry.Term, "proposed", proposal != nil)
 			result := a.app.Apply(entry)
 			if proposal != nil {
-				proposal.UpdateResult(result)
-				proposal.Complete(nil)
+				proposal.Apply(result)
 			}
 		}
 		a.lastApplied = next

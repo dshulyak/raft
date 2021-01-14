@@ -2,13 +2,14 @@ package raft
 
 import (
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
 	"time"
 
-	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
 
@@ -75,6 +76,7 @@ type Update struct {
 }
 
 type state struct {
+	ctx    context.Context
 	logger *zap.SugaredLogger
 
 	rng *rand.Rand
@@ -162,7 +164,8 @@ type role interface {
 	applied(uint64, *Update)
 }
 
-func newStateMachine(logger *zap.Logger,
+func newStateMachine(
+	logger *zap.Logger,
 	id NodeID,
 	minTicks, maxTicks int,
 	conf *Configuration,
@@ -549,9 +552,9 @@ func toLeader(s *state, u *Update) *leader {
 		l.prevLog.Term = last.Term
 	}
 	// replicate noop in order to commit entries from previous terms
-	l.sendProposals(u, &Proposal{Entry: &raftlog.LogEntry{
+	l.sendProposals(u, types.NewProposal(nil, &raftlog.LogEntry{
 		OpType: raftlog.LogNoop,
-	}})
+	}))
 	u.State = RaftLeader
 	u.LeaderState = LeaderKnown
 	u.Updated = true
@@ -606,7 +609,11 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 				}
 				msg.ReadIndex = l.readIndex
 			}
-			proposal.Complete(nil)
+			l.reads.PushBack(&readReq{
+				proposal:    proposal,
+				commitIndex: l.commitIndex,
+				readIndex:   l.readIndex,
+			})
 			continue
 		}
 		entry := proposal.Entry
@@ -688,7 +695,9 @@ func (l *leader) commitInflight(u *Update, idx uint64) {
 		if proposal.Entry.Index > idx {
 			break
 		} else {
+			l.logger.Debugw("proposal is commited", "proposal", proposal)
 			u.Updated = true
+			proposal.Complete(nil)
 			u.Proposals = append(u.Proposals, proposal)
 			prev := front
 			front = front.Next()
