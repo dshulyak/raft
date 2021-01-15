@@ -3,15 +3,32 @@ package raft
 import (
 	"time"
 
-	"github.com/dshulyak/raft/types"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
+
+const (
+	// FeaturePreVote if enabled candidate will gather pre-votes from a majority
+	// before incrementing its own term and starting election.
+	// pre-vote doesn't cause current leader and followers to change
+	// its own term and therefore will not disrupt the cluster if candidate
+	// doesn't have upto-date log.
+	// PreVote mode will allow to tolerate partially disconnected nodes
+	// that otherwise would start multiple campaigns and livelock the cluster.
+	FeaturePreVote uint32 = 1 << iota
+)
+
+func IsPreVoteEnabled(flags uint32) bool {
+	return flags&FeaturePreVote > 0
+}
 
 type Config struct {
 	ID        types.NodeID
 	Transport types.Transport
 	App       types.Application
+
+	FeatureFlags uint32
 
 	// EntriesPerAppend max number of entries in a single AppendEntries.
 	EntriesPerAppend int

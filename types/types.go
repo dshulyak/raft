@@ -4,11 +4,24 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/dshulyak/raft/raftlog"
 )
 
 type NodeID uint64
+
+func (id NodeID) String() string {
+	return strconv.Itoa(int(id))
+}
+
+func NodeIDFromString(id string) (NodeID, error) {
+	nid, err := strconv.Atoi(id)
+	if err != nil {
+		return 0, err
+	}
+	return NodeID(nid), nil
+}
 
 type LogHeader struct {
 	Term, Index uint64
@@ -19,12 +32,14 @@ type Message interface{}
 type RequestVote struct {
 	Term      uint64
 	Candidate NodeID
+	PreVote   bool
 	LastLog   LogHeader
 }
 
 type RequestVoteResponse struct {
 	Term        uint64
 	Voter       NodeID
+	PreVote     bool
 	VoteGranted bool
 }
 

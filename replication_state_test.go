@@ -8,7 +8,7 @@ import (
 )
 
 func TestPeerReplicationFromScratch(t *testing.T) {
-	cluster := getTestCluster(t, 3, 0, 1)
+	cluster := getTestCluster(t)
 
 	peer := cluster.replicationPeer(1, 3, 1)
 	msg := &AppendEntries{
@@ -27,7 +27,7 @@ func TestPeerReplicationFromScratch(t *testing.T) {
 	follower := NodeID(2)
 	cluster.runReplication(peer, follower, msg)
 
-	cluster.compareMsgHistories(t, []interface{}{
+	cluster.compareMsgHistories([]interface{}{
 		msg,
 		&AppendEntriesResponse{
 			Term:     msg.Term,
@@ -42,7 +42,7 @@ func TestPeerReplicationFromScratch(t *testing.T) {
 }
 
 func TestPeerReplicationOutdated(t *testing.T) {
-	cluster := getTestCluster(t, 3, 0, 1)
+	cluster := getTestCluster(t)
 	peerID := NodeID(1)
 	batch := uint64(20)
 	peer := cluster.replicationPeer(peerID, batch, 1)
@@ -104,11 +104,11 @@ func TestPeerReplicationOutdated(t *testing.T) {
 			},
 		},
 	)
-	cluster.compareMsgHistories(t, history)
+	cluster.compareMsgHistories(history)
 }
 
 func TestPeerSendHeartbeat(t *testing.T) {
-	cluster := getTestCluster(t, 3, 0, 1)
+	cluster := getTestCluster(t)
 	peer := cluster.replicationPeer(1, 1, 1)
 	require.Nil(t, peer.next())
 	peer.tick(1)

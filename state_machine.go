@@ -81,6 +81,8 @@ type state struct {
 
 	rng *rand.Rand
 
+	features uint32
+
 	minElection, maxElection int
 	election                 int
 
@@ -167,6 +169,7 @@ type role interface {
 func newStateMachine(
 	logger *zap.Logger,
 	id NodeID,
+	features uint32,
 	minTicks, maxTicks int,
 	conf *Configuration,
 	log *raftlog.Storage,
@@ -188,6 +191,7 @@ func newStateMachine(
 			minElection:   minTicks,
 			maxElection:   maxTicks,
 			id:            id,
+			features:      features,
 			nodes:         nodes,
 			configuration: conf,
 			log:           log,
@@ -404,7 +408,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		grant = f.VotedFor == msg.Candidate
 	} else {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
-		if grant {
+		if grant && !msg.PreVote {
 			f.VotedFor = msg.Candidate
 			f.Term = msg.Term
 			f.must(f.Sync(), "failed to sync durable state")
@@ -413,6 +417,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	context := "vote is not granted"
 	if grant {
 		context = "granted a vote"
+		// do we reset timer if it is a pre-vote?
 		f.resetTicks()
 	}
 	f.logger.Debugw(context,
@@ -421,49 +426,64 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		"voter", f.id,
 		"last log index", msg.LastLog.Index,
 		"last log term", msg.LastLog.Term,
+		"pre vote", msg.PreVote,
 	)
 	f.send(u, &RequestVoteResponse{
 		Term:        f.Term,
 		Voter:       f.id,
 		VoteGranted: grant,
+		PreVote:     msg.PreVote,
 	}, msg.Candidate)
 	return nil
 }
 
 func toCandidate(s *state, u *Update) *candidate {
-	s.resetTicks()
-	s.Term++
-	s.VotedFor = s.id
-	s.must(s.Sync(), "failed to sync durable state")
-
-	c := candidate{state: s, votes: map[NodeID]struct{}{
-		s.id: {},
-	}}
-
-	last, err := s.log.Last()
-	if errors.Is(err, raftlog.ErrEmptyLog) {
-		c.logger.Debugw("log is empty")
-	} else if err != nil {
-		s.must(err, "failed to fetch last log entry")
+	c := candidate{
+		state: s,
+		votes: map[NodeID]struct{}{},
 	}
-
-	request := &RequestVote{
-		Term:      s.Term,
-		Candidate: s.id,
-	}
-	request.LastLog.Term = last.Term
-	request.LastLog.Index = last.Index
-	s.logger.Debugw("starting an election campaign", "candidate", s.id, "term", s.Term)
-	s.send(u, request)
-	u.LeaderState = LeaderUnknown
-	u.State = RaftCandidate
-	u.Updated = true
+	c.campaign(IsPreVoteEnabled(c.features), u)
 	return &c
 }
 
 type candidate struct {
 	*state
-	votes map[NodeID]struct{}
+	preVote bool
+	votes   map[NodeID]struct{}
+}
+
+func (c *candidate) campaign(preVote bool, u *Update) {
+	c.preVote = preVote
+	for voter := range c.votes {
+		delete(c.votes, voter)
+	}
+	c.resetTicks()
+	if !c.preVote {
+		c.Term++
+		c.VotedFor = c.id
+		c.must(c.Sync(), "failed to sync durable state")
+	}
+
+	c.votes[c.id] = struct{}{}
+	last, err := c.log.Last()
+	if errors.Is(err, raftlog.ErrEmptyLog) {
+		c.logger.Debugw("log is empty")
+	} else if err != nil {
+		c.must(err, "failed to fetch last log entry")
+	}
+
+	request := &RequestVote{
+		Term:      c.Term,
+		Candidate: c.id,
+		PreVote:   c.preVote,
+	}
+	request.LastLog.Term = last.Term
+	request.LastLog.Index = last.Index
+	c.logger.Debugw("starting an election campaign", "candidate", c.id, "term", c.Term, "pre-vote mode", c.preVote)
+	c.send(u, request)
+	u.LeaderState = LeaderUnknown
+	u.State = RaftCandidate
+	u.Updated = true
 }
 
 func (c *candidate) applied(uint64, *Update) {}
@@ -508,9 +528,16 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 		if !m.VoteGranted {
 			return nil
 		}
-		c.logger.Debugw("received a vote", "voter", m.Voter, "candidate", c.id)
+		if c.preVote != m.PreVote {
+			return nil
+		}
+		c.logger.Debugw("received a vote", "voter", m.Voter, "candidate", c.id, "pre-vote", m.PreVote)
 		c.votes[m.Voter] = struct{}{}
 		if len(c.votes) < c.majority() {
+			return nil
+		}
+		if c.preVote {
+			c.campaign(false, u)
 			return nil
 		}
 		return toLeader(c.state, u)
@@ -715,8 +742,9 @@ func (l *leader) next(msg interface{}, u *Update) role {
 			return l.stepdown(m.Term, u)
 		}
 		l.send(u, &RequestVoteResponse{
-			Voter: l.id,
-			Term:  l.Term,
+			Voter:   l.id,
+			Term:    l.Term,
+			PreVote: m.PreVote,
 		}, m.Candidate)
 	case *AppendEntries:
 		if m.Term > l.Term {

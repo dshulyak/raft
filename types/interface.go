@@ -8,6 +8,8 @@ import (
 
 type Transport interface {
 	Dial(context.Context, *Node) (MsgStream, error)
+	// TODO refactor it to provide API such as
+	// Accept(context.Context) (MsgStream, error)
 	HandleStream(func(MsgStream))
 	Close() error
 }

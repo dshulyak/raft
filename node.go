@@ -98,6 +98,7 @@ func NewNode(conf *Config) *Node {
 	n.raft = newStateMachine(
 		conf.Logger,
 		conf.ID,
+		conf.FeatureFlags,
 		conf.ElectionTimeoutMin, conf.ElectionTimeoutMax,
 		conf.Configuration,
 		conf.Storage,
