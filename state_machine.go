@@ -156,8 +156,13 @@ func (s *state) send(u *Update, msg interface{}, to ...NodeID) {
 	u.Updated = true
 }
 
-func (s *state) resetTicks() {
-	s.election = s.rng.Intn(s.maxElection-s.minElection) + s.minElection
+func (s *state) resetElectionTimeout() {
+	// jitter = [1, maxElection-minElection]
+	jitter := s.rng.Intn(1 + s.maxElection - s.minElection)
+	if jitter == 0 {
+		jitter = 1
+	}
+	s.election = s.minElection + jitter
 }
 
 type role interface {
@@ -251,21 +256,39 @@ func (s *stateMachine) Update() *Update {
 }
 
 func toFollower(s *state, term uint64, u *Update) *follower {
-	s.resetTicks()
-	s.leader = None
+	f := &follower{state: s}
+	f.resetElectionTimeout()
+	f.leader = None
 	if term > s.Term {
-		s.Term = term
-		s.VotedFor = None
-		s.must(s.Sync(), "failed to sync durable state")
+		f.Term = term
+		f.VotedFor = None
+		f.must(f.Sync(), "failed to sync durable state")
 	}
+
 	u.State = RaftFollower
 	u.LeaderState = LeaderUnknown
 	u.Updated = true
-	return &follower{state: s}
+	return f
 }
 
 type follower struct {
 	*state
+
+	// linkTimeout is equal to the min election timeout.
+	// if RequestVote is received before min election timeout has passed it will be rejected.
+	// prevents partially connected replice with a recent log from livelocking a cluster
+	//
+	// described in 6. Cluster membership changes
+	//
+	// ignored without PreVote mode. without PreVote disconnected replica will
+	// increment local term, and it will make it to ignore hearbeats from the active
+	// leader
+	linkTimeout int
+}
+
+// resetLinkTimeout must be reset only after hearing from a current leader.
+func (f *follower) resetLinkTimeout() {
+	f.linkTimeout = f.minElection
 }
 
 func (f *follower) applied(uint64, *Update) {}
@@ -277,6 +300,9 @@ func (f *follower) tick(n int, u *Update) role {
 			"id", f.id,
 		)
 		return toCandidate(f.state, u)
+	}
+	if IsPreVoteEnabled(f.features) {
+		f.linkTimeout -= n
 	}
 	return nil
 }
@@ -316,7 +342,8 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		u.LeaderState = LeaderKnown
 		u.Updated = true
 	}
-	f.resetTicks()
+	f.resetElectionTimeout()
+	f.resetLinkTimeout()
 	f.logger.Debugw("append entries", "msg", msg)
 
 	empty := f.log.IsEmpty()
@@ -399,7 +426,9 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		f.must(f.Sync(), "failed to sync durable state")
 	}
 	var grant bool
-	if msg.Term < f.Term {
+	if f.linkTimeout > 0 && IsPreVoteEnabled(f.features) {
+		grant = false
+	} else if msg.Term < f.Term {
 		grant = false
 	} else if msg.Term == f.Term && f.VotedFor != None {
 		// this is kind of an optimization to allow faster recovery
@@ -418,7 +447,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	if grant {
 		context = "granted a vote"
 		// do we reset timer if it is a pre-vote?
-		f.resetTicks()
+		f.resetElectionTimeout()
 	}
 	f.logger.Debugw(context,
 		"term", msg.Term,
@@ -457,14 +486,16 @@ func (c *candidate) campaign(preVote bool, u *Update) {
 	for voter := range c.votes {
 		delete(c.votes, voter)
 	}
-	c.resetTicks()
+	c.votes[c.id] = struct{}{}
+
 	if !c.preVote {
 		c.Term++
 		c.VotedFor = c.id
 		c.must(c.Sync(), "failed to sync durable state")
 	}
 
-	c.votes[c.id] = struct{}{}
+	c.resetElectionTimeout()
+
 	last, err := c.log.Last()
 	if errors.Is(err, raftlog.ErrEmptyLog) {
 		c.logger.Debugw("log is empty")
@@ -479,8 +510,10 @@ func (c *candidate) campaign(preVote bool, u *Update) {
 	}
 	request.LastLog.Term = last.Term
 	request.LastLog.Index = last.Index
+
 	c.logger.Debugw("starting an election campaign", "candidate", c.id, "term", c.Term, "pre-vote mode", c.preVote)
 	c.send(u, request)
+
 	u.LeaderState = LeaderUnknown
 	u.State = RaftCandidate
 	u.Updated = true
@@ -506,8 +539,9 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 			return toFollower(c.state, m.Term, u)
 		}
 		c.send(u, &RequestVoteResponse{
-			Voter: c.id,
-			Term:  c.Term,
+			Voter:   c.id,
+			Term:    c.Term,
+			PreVote: m.PreVote,
 		}, m.Candidate)
 	case *AppendEntries:
 		// leader might have been elected in the same term as the candidate

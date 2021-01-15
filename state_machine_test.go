@@ -59,8 +59,8 @@ func getTestCluster(t TestingHelper, opts ...testClusterOp) *testCluster {
 		t:             t,
 		logger:        logger,
 		size:          3,
-		minTicks:      0,
-		maxTicks:      1,
+		minTicks:      1,
+		maxTicks:      10,
 		configuration: configuration,
 		logs:          map[NodeID]*raftlog.Storage{},
 		ds:            map[NodeID]*DurableState{},
@@ -160,6 +160,12 @@ func (t *testCluster) applied(id NodeID, applied uint64) *Update {
 func (t *testCluster) triggerTimeout(id NodeID) *Update {
 	require.NoError(t.t, t.states[id].Tick(t.maxTicks))
 	return t.states[id].Update()
+}
+
+func (t *testCluster) incrementTimeout() {
+	for _, st := range t.states {
+		st.Tick(1)
+	}
 }
 
 func (c *testCluster) blockRoute(from, to NodeID) {
@@ -359,6 +365,7 @@ func TestRaftLeaderDisrupted(t *testing.T) {
 	cluster := getTestCluster(t)
 	cluster.run(t, cluster.triggerTimeout(1), 1)
 	cluster.resetHistory()
+
 	cluster.run(t, cluster.triggerTimeout(2), 2)
 	cluster.compareMsgHistories([]interface{}{
 		&RequestVote{
@@ -654,6 +661,46 @@ func TestRaftPreVoteNoDisrupt(t *testing.T) {
 			PreVote: true,
 		},
 	})
+}
+
+func TestRaftLinkTimeout(t *testing.T) {
+	cluster := getTestCluster(t, withPreVote())
+	leader := NodeID(1)
+	timedout := NodeID(2)
+
+	cluster.run(t, cluster.triggerTimeout(leader), leader)
+
+	cluster.resetHistory()
+	cluster.run(t, cluster.triggerTimeout(timedout), timedout)
+	cluster.compareMsgHistories([]interface{}{
+		&RequestVote{
+			Term:      1,
+			Candidate: timedout,
+			PreVote:   true,
+			LastLog: types.LogHeader{
+				Index: 1,
+				Term:  1,
+			},
+		},
+		&RequestVote{
+			Term:      1,
+			Candidate: timedout,
+			PreVote:   true,
+			LastLog: types.LogHeader{
+				Index: 1,
+				Term:  1,
+			},
+		},
+		&RequestVoteResponse{
+			Term:    1,
+			Voter:   1,
+			PreVote: true,
+		},
+		&RequestVoteResponse{
+			Term:    1,
+			Voter:   3,
+			PreVote: true,
+		}})
 }
 
 type rapidCleanup struct {
