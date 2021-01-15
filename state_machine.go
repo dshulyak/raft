@@ -426,26 +426,26 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		f.must(f.Sync(), "failed to sync durable state")
 	}
 	var grant bool
+	context := "vote is not granted"
 	if f.linkTimeout > 0 && IsPreVoteEnabled(f.features) {
 		grant = false
+		context = "link timeout is not elapsed"
 	} else if msg.Term < f.Term {
 		grant = false
-	} else if msg.Term == f.Term && f.VotedFor != None {
-		// this is kind of an optimization to allow faster recovery
-		// if candidate crashed (connection timed out) before persisting new term.
-		// can be removed to simplify things a bit.
+		context = "msg term is less than the local term"
+	} else if !msg.PreVote && (msg.Term == f.Term && f.VotedFor != None) {
 		grant = f.VotedFor == msg.Candidate
+		context = "already voted for this candidate in this term"
 	} else {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
+		context = "log is outdated"
 		if grant && !msg.PreVote {
 			f.VotedFor = msg.Candidate
 			f.Term = msg.Term
 			f.must(f.Sync(), "failed to sync durable state")
 		}
 	}
-	context := "vote is not granted"
 	if grant {
-		context = "granted a vote"
 		// do we reset timer if it is a pre-vote?
 		f.resetElectionTimeout()
 	}

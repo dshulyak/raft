@@ -672,35 +672,51 @@ func TestRaftLinkTimeout(t *testing.T) {
 
 	cluster.resetHistory()
 	cluster.run(t, cluster.triggerTimeout(timedout), timedout)
-	cluster.compareMsgHistories([]interface{}{
-		&RequestVote{
-			Term:      1,
-			Candidate: timedout,
-			PreVote:   true,
-			LastLog: types.LogHeader{
-				Index: 1,
-				Term:  1,
+	electionHistory := func(success bool) []interface{} {
+		return []interface{}{
+			&RequestVote{
+				Term:      1,
+				Candidate: timedout,
+				PreVote:   true,
+				LastLog: types.LogHeader{
+					Index: 1,
+					Term:  1,
+				},
 			},
-		},
-		&RequestVote{
-			Term:      1,
-			Candidate: timedout,
-			PreVote:   true,
-			LastLog: types.LogHeader{
-				Index: 1,
-				Term:  1,
+			&RequestVote{
+				Term:      1,
+				Candidate: timedout,
+				PreVote:   true,
+				LastLog: types.LogHeader{
+					Index: 1,
+					Term:  1,
+				},
 			},
-		},
-		&RequestVoteResponse{
-			Term:    1,
-			Voter:   1,
-			PreVote: true,
-		},
-		&RequestVoteResponse{
-			Term:    1,
-			Voter:   3,
-			PreVote: true,
-		}})
+			// leader will always reply false. but it will convert
+			// to follower when sees higher term
+			&RequestVoteResponse{
+				Term:        1,
+				Voter:       leader,
+				VoteGranted: false,
+				PreVote:     true,
+			},
+			&RequestVoteResponse{
+				Term:        1,
+				Voter:       3,
+				VoteGranted: success,
+				PreVote:     true,
+			},
+		}
+	}
+	cluster.compareMsgHistories(electionHistory(false))
+
+	cluster.resetHistory()
+
+	// now link timeout will allow new election to progress
+	cluster.incrementTimeout()
+	cluster.run(t, cluster.triggerTimeout(timedout), timedout)
+	require.True(t, len(cluster.messages) > 4, len(cluster.messages))
+	cluster.compareMsgs(electionHistory(true), cluster.messages[:4])
 }
 
 type rapidCleanup struct {
