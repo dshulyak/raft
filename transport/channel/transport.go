@@ -154,10 +154,10 @@ func (t *Transport) Dial(ctx context.Context, n *types.Node) (transport.MsgStrea
 			blocked: t.blocked,
 			p1:      t.id,
 			p2:      n.ID,
-			r1:      make(chan types.Message),
-			r2:      make(chan types.Message),
-			w1:      make(chan types.Message),
-			w2:      make(chan types.Message),
+			r1:      make(chan *types.Message),
+			r2:      make(chan *types.Message),
+			w1:      make(chan *types.Message),
+			w2:      make(chan *types.Message),
 		}
 		t.connections[n.ID] = conn
 		go func(id types.NodeID) {
@@ -225,7 +225,7 @@ type Connection struct {
 	p1, p2         types.NodeID
 	ctx            context.Context
 	cancel         func()
-	r1, w1, r2, w2 chan types.Message
+	r1, w1, r2, w2 chan *types.Message
 }
 
 func (c *Connection) Pair() (s1, s2 *Stream) {
@@ -265,10 +265,10 @@ func (c *Connection) run() {
 
 }
 
-func (c *Connection) deliver(from, to types.NodeID, r, w chan types.Message) error {
+func (c *Connection) deliver(from, to types.NodeID, r, w chan *types.Message) error {
 	var (
-		msg     types.Message
-		out, in chan types.Message
+		msg     *types.Message
+		out, in chan *types.Message
 	)
 	for {
 		if msg != nil {
@@ -296,14 +296,14 @@ var _ transport.MsgStream = (*Stream)(nil)
 type Stream struct {
 	conn *Connection
 	id   types.NodeID
-	r, w chan types.Message
+	r, w chan *types.Message
 }
 
 func (s *Stream) ID() types.NodeID {
 	return s.id
 }
 
-func (s *Stream) Send(msg types.Message) error {
+func (s *Stream) Send(msg *types.Message) error {
 	select {
 	case <-s.conn.ctx.Done():
 		return io.EOF
@@ -312,7 +312,7 @@ func (s *Stream) Send(msg types.Message) error {
 	}
 }
 
-func (s *Stream) Receive() (types.Message, error) {
+func (s *Stream) Receive() (*types.Message, error) {
 	select {
 	case <-s.conn.ctx.Done():
 		return nil, io.EOF

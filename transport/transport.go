@@ -17,8 +17,8 @@ type (
 
 	MsgStream interface {
 		ID() types.NodeID
-		Send(types.Message) error
-		Receive() (types.Message, error)
+		Send(*types.Message) error
+		Receive() (*types.Message, error)
 		Close() error
 	}
 )

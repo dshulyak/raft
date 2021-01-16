@@ -14,6 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func getTestMessage(i int) *types.Message {
+	return &types.Message{
+		Type: &types.Message_ReqVote{
+			ReqVote: &types.RequestVote{Term: uint64(i)},
+		},
+	}
+}
+
 func TestHostDown(t *testing.T) {
 	net := New()
 	t.Cleanup(func() {
@@ -33,7 +41,7 @@ func TestMsgStream(t *testing.T) {
 	})
 	first := net.Transport(1)
 	second := net.Transport(2)
-	received := make(chan types.Message, 1)
+	received := make(chan *types.Message, 1)
 	second.HandleStream(func(stream transport.MsgStream) {
 		go func() {
 			for {
@@ -51,10 +59,11 @@ func TestMsgStream(t *testing.T) {
 
 	n := 3333
 	for i := 0; i < n; i++ {
-		require.NoError(t, stream.Send(i))
+		msg := getTestMessage(i)
+		require.NoError(t, stream.Send(msg))
 		select {
 		case received := <-received:
-			require.Equal(t, i, received)
+			require.Equal(t, msg, received)
 		case <-time.After(500 * time.Millisecond):
 			require.FailNow(t, "timed out waiting for a message %v", i)
 		}
@@ -73,7 +82,7 @@ func TestMsgReverse(t *testing.T) {
 	second.HandleStream(func(stream transport.MsgStream) {
 		go func() {
 			for i := 0; i < n; i++ {
-				if err := stream.Send(i); err == io.EOF {
+				if err := stream.Send(getTestMessage(i)); err == io.EOF {
 					return
 				}
 			}
@@ -85,7 +94,7 @@ func TestMsgReverse(t *testing.T) {
 	for i := 0; i < n; i++ {
 		msg, err := stream.Receive()
 		require.NoError(t, err)
-		require.Equal(t, i, msg)
+		require.Equal(t, getTestMessage(i), msg)
 	}
 }
 
@@ -97,13 +106,14 @@ func TestStreamsBlocked(t *testing.T) {
 	first := net.Transport(1)
 	second := net.Transport(2)
 
-	received := make(chan types.Message, 1)
+	received := make(chan *types.Message, 1)
+	errc := make(chan error, 1)
 	second.HandleStream(func(stream transport.MsgStream) {
 		go func() {
 			for {
 				msg, err := stream.Receive()
 				if err != nil {
-					received <- err
+					errc <- err
 					return
 				}
 				received <- msg
@@ -114,7 +124,7 @@ func TestStreamsBlocked(t *testing.T) {
 	stream, err := first.Dial(context.TODO(), &types.Node{ID: 2})
 	require.NoError(t, err)
 
-	expect := 10
+	expect := getTestMessage(10)
 	require.NoError(t, stream.Send(expect))
 	select {
 	case <-time.After(time.Second):
@@ -123,12 +133,11 @@ func TestStreamsBlocked(t *testing.T) {
 		require.Equal(t, expect, msg)
 	}
 	net.Block(1, 2)
-	dropped := 11
-	require.NoError(t, stream.Send(dropped))
+	require.NoError(t, stream.Send(expect))
 	select {
 	case <-time.After(time.Second):
 		require.FailNow(t, "timed out waiting for an error")
-	case err := <-received:
+	case err := <-errc:
 		require.Equal(t, io.EOF, err)
 	}
 }
