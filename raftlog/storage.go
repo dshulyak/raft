@@ -42,7 +42,7 @@ type Storage struct {
 	log   *Log
 }
 
-func (s *Storage) Get(i int) (entry LogEntry, err error) {
+func (s *Storage) Get(i int) (entry Entry, err error) {
 	// TODO change index to int
 	idx := s.index.Get(uint64(i))
 	if idx.Length == 0 && idx.Offset == 0 {
@@ -57,7 +57,7 @@ func (s *Storage) IsEmpty() bool {
 	return s.index.IsEmpty()
 }
 
-func (s *Storage) Last() (entry LogEntry, err error) {
+func (s *Storage) Last() (entry Entry, err error) {
 	if s.index.IsEmpty() {
 		err = ErrEmptyLog
 		return
@@ -67,7 +67,7 @@ func (s *Storage) Last() (entry LogEntry, err error) {
 	return
 }
 
-func (s *Storage) Append(entry *LogEntry) error {
+func (s *Storage) Append(entry *Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	size, err := s.log.Append(entry)
@@ -122,7 +122,7 @@ type Iterator struct {
 
 	current int
 	err     error
-	entry   *LogEntry
+	entry   *Entry
 }
 
 func (i *Iterator) Error() error {
@@ -150,6 +150,6 @@ func (i *Iterator) Next() bool {
 	return true
 }
 
-func (i *Iterator) Entry() *LogEntry {
+func (i *Iterator) Entry() *Entry {
 	return i.entry
 }

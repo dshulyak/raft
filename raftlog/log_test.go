@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"testing"
 
+	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +20,7 @@ func TestLogAppendGet(t *testing.T) {
 	offsets := make([]IndexEntry, entries)
 	offset := log.HeaderSize()
 	for i := 0; i < entries; i++ {
-		size, err := log.Append(&LogEntry{
+		size, err := log.Append(&Entry{
 			Index: uint64(i),
 		})
 		offsets[i] = IndexEntry{Offset: offset, Length: size}
@@ -27,7 +28,7 @@ func TestLogAppendGet(t *testing.T) {
 		offset += size
 	}
 	require.NoError(t, log.Flush())
-	var entry LogEntry
+	var entry Entry
 	for i := range offsets {
 		require.NoError(t, log.Get(&offsets[i], &entry), "entry at index %d", i)
 		require.Equal(t, i, int(entry.Index))
@@ -46,7 +47,7 @@ func TestLogCRCVerification(t *testing.T) {
 		require.NoError(t, log.Delete())
 	})
 
-	size, err := log.Append(&LogEntry{Index: 1})
+	size, err := log.Append(&Entry{Index: 1})
 	require.NoError(t, err)
 	require.NoError(t, log.Flush())
 
@@ -54,7 +55,7 @@ func TestLogCRCVerification(t *testing.T) {
 	_, err = f.WriteAt([]byte{1, 2, 3}, int64(offset+size/2))
 	require.NoError(t, err)
 
-	var entry LogEntry
+	var entry Entry
 	require.True(t, errors.Is(log.Get(&IndexEntry{Offset: offset, Length: size}, &entry), ErrLogCorrupted))
 }
 
@@ -68,11 +69,11 @@ func BenchmarkLogAppend(b *testing.B) {
 	buf := make([]byte, 10)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := log.Append(&LogEntry{
-			Index:  1,
-			Term:   1,
-			OpType: LogNoop,
-			Op:     buf,
+		_, err := log.Append(&Entry{
+			Index: 1,
+			Term:  1,
+			Type:  types.Entry_NOOP,
+			Op:    buf,
 		})
 		if err != nil {
 			require.NoError(b, err)

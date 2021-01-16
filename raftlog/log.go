@@ -12,6 +12,8 @@ import (
 
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
+
+	"github.com/dshulyak/raft/types"
 )
 
 const (
@@ -36,77 +38,13 @@ func uvarintSize(x uint64) uint64 {
 	return i + 1
 }
 
-type LogType uint8
-
-func (t LogType) String() string {
-	return logString[t]
-}
-
-const (
-	LogNoop LogType = iota + 1
-	LogApplication
-	LogConfiguration
-)
-
-var logString = [...]string{
-	"Empty", "Noop", "App", "Conf",
-}
-
 type LogHeader struct {
 	Version    [10]byte
 	FirstIndex uint64
 	_          [46]byte
 }
 
-type LogEntry struct {
-	Term   uint64
-	Index  uint64
-	OpType LogType
-	Op     []byte
-}
-
-func (e *LogEntry) String() string {
-	return fmt.Sprintf("term=%d index=%d type=%s", e.Term, e.Index, e.OpType.String())
-}
-
-func (l *LogEntry) Size() uint64 {
-	opSize := uint64(len(l.Op))
-	return uvarintSize(l.Term) + uvarintSize(l.Index) +
-		uint64(opTypeSize) + uvarintSize(opSize) + opSize
-}
-
-func (l *LogEntry) Encode(to []byte) error {
-	offset := 0
-	offset += binary.PutUvarint(to[offset:], l.Term)
-	offset += binary.PutUvarint(to[offset:], l.Index)
-	to[offset] = byte(l.OpType)
-	offset++
-	offset += binary.PutUvarint(to[offset:], uint64(len(l.Op)))
-	copy(to[offset:], l.Op)
-	return nil
-}
-
-func (l *LogEntry) Decode(from []byte) error {
-	var offset, n int
-	l.Term, n = binary.Uvarint(from[offset:])
-	offset += n
-	l.Index, n = binary.Uvarint(from[offset:])
-	offset += n
-	l.OpType = LogType(from[offset])
-	offset++
-	_, n = binary.Uvarint(from[offset:])
-	offset += n
-	l.Op = append(l.Op, from[offset:]...)
-	return nil
-}
-
-// Reset LogEntry for reuse.
-func (l *LogEntry) Reset() {
-	l.Index = 0
-	l.Term = 0
-	l.OpType = 0
-	l.Op = nil
-}
+type Entry = types.Entry
 
 type LogOptions struct {
 	File       string
@@ -185,11 +123,11 @@ func (l *Log) init(lastIndex *IndexEntry, opts *LogOptions) error {
 	}
 	offset := uint64(stat.Size())
 	if lastIndex != nil {
-		var entry LogEntry
+		var entry Entry
 		if err := l.Get(lastIndex, &entry); err != nil {
 			return err
 		}
-		validSize := lastIndex.Offset + entry.Size() + crcSize
+		validSize := lastIndex.Offset + uint64(entry.Size()) + crcSize
 		if uint64(stat.Size()) == validSize {
 			return nil
 		}
@@ -199,7 +137,7 @@ func (l *Log) init(lastIndex *IndexEntry, opts *LogOptions) error {
 			"current size", stat.Size(),
 			"valid size", validSize,
 		)
-		offset = lastIndex.Offset + entry.Size()
+		offset = lastIndex.Offset + uint64(entry.Size())
 		if err := l.Truncate(offset); err != nil {
 			return err
 		}
@@ -237,10 +175,10 @@ func (l *Log) Truncate(offset uint64) error {
 	return nil
 }
 
-func (l *Log) Append(entry *LogEntry) (uint64, error) {
-	size := entry.Size() + crcSize
+func (l *Log) Append(entry *Entry) (uint64, error) {
+	size := uint64(entry.Size()) + crcSize
 	buf := make([]byte, size)
-	if err := entry.Encode(buf[crcSize:]); err != nil {
+	if _, err := entry.MarshalTo(buf[crcSize:]); err != nil {
 		return 0, err
 	}
 	_ = putCrc32(buf, buf[crcSize:])
@@ -256,7 +194,7 @@ func (l *Log) Append(entry *LogEntry) (uint64, error) {
 	return size, nil
 }
 
-func (l *Log) Get(index *IndexEntry, entry *LogEntry) error {
+func (l *Log) Get(index *IndexEntry, entry *Entry) error {
 	buf := make([]byte, index.Length)
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -269,7 +207,7 @@ func (l *Log) Get(index *IndexEntry, entry *LogEntry) error {
 	if !cmpCrc32(buf, buf[crcSize:]) {
 		return ErrLogCorrupted
 	}
-	return entry.Decode(buf[crcSize:])
+	return entry.Unmarshal(buf[crcSize:])
 }
 
 func (l *Log) Flush() error {
@@ -324,7 +262,7 @@ type LogScanner struct {
 	reader io.Reader
 }
 
-func (s *LogScanner) Scan(size uint64) (*LogEntry, error) {
+func (s *LogScanner) Scan(size uint64) (*Entry, error) {
 	buf := make([]byte, size)
 	total := 0
 	for total < int(size) {
@@ -339,8 +277,8 @@ func (s *LogScanner) Scan(size uint64) (*LogEntry, error) {
 	if !cmpCrc32(buf, buf[crcSize:]) {
 		return nil, ErrLogCorrupted
 	}
-	var entry LogEntry
-	err := entry.Decode(buf[crcSize:])
+	var entry Entry
+	err := entry.Unmarshal(buf[crcSize:])
 	if err != nil {
 		return nil, err
 	}
