@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package types;
+
+import "gogo.proto";
+
+message LogHeader {
+  uint64 term = 1;
+  uint64 index = 2;
+}
+
+message RequestVote {
+  uint64 term = 1;
+  uint64 candidate = 2 [(gogoproto.casttype) = "NodeID"];
+  bool preVote = 3;
+  LogHeader lastLog = 4;
+}
+
+message RequestVoteResponse {
+  uint64 term = 1;
+  uint64 voter = 2 [(gogoproto.casttype) = "NodeID"];
+  bool preVote = 3;
+  bool voteGranted = 4;
+}
+
+message Entry {
+  enum OpType {
+    EMPTY = 0;
+    NOOP = 1;
+    APP = 2;
+    CONF = 3;
+  }
+  uint64 term = 1;
+  uint64 index = 2;
+  OpType type = 3;
+  bytes op = 4;
+}
+
+message AppendEntries {
+  uint64 term = 1;
+  uint64 leader = 2 [(gogoproto.casttype) = "NodeID"];
+  LogHeader prevLog = 3;
+  uint64 commited = 4;
+  uint64 readIndex = 5;
+  repeated Entry entries = 6;
+}
+
+message AppendEntriesResponse {
+  uint64 term = 1;
+  uint64 follower = 2 [(gogoproto.casttype) = "NodeID"];
+  bool success = 3;
+  LogHeader lastLog = 4;
+  uint64 readIndex = 5;
+}
+
+message Message {
+  oneof type {
+    RequestVote reqVote = 1;
+    RequestVoteResponse reqVoteResp = 2;
+    AppendEntries append = 3;
+    AppendEntriesResponse appendResp = 4;
+  }
+}
