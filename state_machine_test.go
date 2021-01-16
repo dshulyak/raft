@@ -279,48 +279,48 @@ func testReplicationAfterElection(t *testing.T, term uint64) {
 		&AppendEntries{
 			Term:    term,
 			Leader:  1,
-			Entries: []*raftlog.LogEntry{{Index: 1, Term: term, OpType: raftlog.LogNoop}},
+			Entries: []*types.Entry{{Index: 1, Term: term, Type: types.Entry_NOOP}},
 		},
 		&AppendEntries{
 			Term:    term,
 			Leader:  1,
-			Entries: []*raftlog.LogEntry{{Index: 1, Term: term, OpType: raftlog.LogNoop}},
+			Entries: []*types.Entry{{Index: 1, Term: term, Type: types.Entry_NOOP}},
 		},
 		&AppendEntriesResponse{
 			Term:     term,
 			Follower: 2,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: term},
+			LastLog:  types.LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntriesResponse{
 			Term:     term,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: term},
+			LastLog:  types.LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntries{
 			Term:     term,
 			Leader:   1,
 			Commited: 1,
-			PrevLog:  LogHeader{Index: 1, Term: term},
+			PrevLog:  types.LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntries{
 			Term:     term,
 			Leader:   1,
 			Commited: 1,
-			PrevLog:  LogHeader{Index: 1, Term: term},
+			PrevLog:  types.LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntriesResponse{
 			Term:     term,
 			Follower: 2,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: term},
+			LastLog:  types.LogHeader{Index: 1, Term: term},
 		},
 		&AppendEntriesResponse{
 			Term:     term,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: term},
+			LastLog:  types.LogHeader{Index: 1, Term: term},
 		},
 	})
 }
@@ -371,12 +371,12 @@ func TestRaftLeaderDisrupted(t *testing.T) {
 		&RequestVote{
 			Term:      2,
 			Candidate: 2,
-			LastLog:   LogHeader{Term: 1, Index: 1},
+			LastLog:   types.LogHeader{Term: 1, Index: 1},
 		},
 		&RequestVote{
 			Term:      2,
 			Candidate: 2,
-			LastLog:   LogHeader{Term: 1, Index: 1},
+			LastLog:   types.LogHeader{Term: 1, Index: 1},
 		},
 		&RequestVoteResponse{
 			Term:        2,
@@ -391,50 +391,50 @@ func TestRaftLeaderDisrupted(t *testing.T) {
 		&AppendEntries{
 			Term:    2,
 			Leader:  2,
-			Entries: []*raftlog.LogEntry{{Index: 2, Term: 2, OpType: raftlog.LogNoop}},
-			PrevLog: LogHeader{Term: 1, Index: 1},
+			Entries: []*raftlog.Entry{{Index: 2, Term: 2, Type: types.Entry_NOOP}},
+			PrevLog: types.LogHeader{Term: 1, Index: 1},
 		},
 		&AppendEntries{
 			Term:    2,
 			Leader:  2,
-			Entries: []*raftlog.LogEntry{{Index: 2, Term: 2, OpType: raftlog.LogNoop}},
-			PrevLog: LogHeader{Term: 1, Index: 1},
+			Entries: []*raftlog.Entry{{Index: 2, Term: 2, Type: types.Entry_NOOP}},
+			PrevLog: types.LogHeader{Term: 1, Index: 1},
 		},
 		&AppendEntriesResponse{
 			Term:     2,
 			Follower: 1,
 			Success:  true,
-			LastLog:  LogHeader{Index: 2, Term: 2},
+			LastLog:  types.LogHeader{Index: 2, Term: 2},
 		},
 		&AppendEntriesResponse{
 			Term:     2,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 2, Term: 2},
+			LastLog:  types.LogHeader{Index: 2, Term: 2},
 		},
 		&AppendEntries{
 			Term:     2,
 			Leader:   2,
 			Commited: 2,
-			PrevLog:  LogHeader{Index: 2, Term: 2},
+			PrevLog:  types.LogHeader{Index: 2, Term: 2},
 		},
 		&AppendEntries{
 			Term:     2,
 			Leader:   2,
 			Commited: 2,
-			PrevLog:  LogHeader{Index: 2, Term: 2},
+			PrevLog:  types.LogHeader{Index: 2, Term: 2},
 		},
 		&AppendEntriesResponse{
 			Term:     2,
 			Follower: 1,
 			Success:  true,
-			LastLog:  LogHeader{Index: 2, Term: 2},
+			LastLog:  types.LogHeader{Index: 2, Term: 2},
 		},
 		&AppendEntriesResponse{
 			Term:     2,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 2, Term: 2},
+			LastLog:  types.LogHeader{Index: 2, Term: 2},
 		},
 	})
 }
@@ -464,48 +464,48 @@ func TestRaftCandidateTransitionToFollower(t *testing.T) {
 		&AppendEntries{
 			Term:    1,
 			Leader:  2,
-			Entries: []*raftlog.LogEntry{{Index: 1, Term: 1, OpType: raftlog.LogNoop}},
+			Entries: []*raftlog.Entry{{Index: 1, Term: 1, Type: types.Entry_NOOP}},
 		},
 		&AppendEntries{
 			Term:    1,
 			Leader:  2,
-			Entries: []*raftlog.LogEntry{{Index: 1, Term: 1, OpType: raftlog.LogNoop}},
+			Entries: []*raftlog.Entry{{Index: 1, Term: 1, Type: types.Entry_NOOP}},
 		},
 		&AppendEntriesResponse{
 			Term:     1,
 			Follower: 1,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: 1},
+			LastLog:  types.LogHeader{Index: 1, Term: 1},
 		},
 		&AppendEntriesResponse{
 			Term:     1,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: 1},
+			LastLog:  types.LogHeader{Index: 1, Term: 1},
 		},
 		&AppendEntries{
 			Term:     1,
 			Leader:   2,
 			Commited: 1,
-			PrevLog:  LogHeader{Index: 1, Term: 1},
+			PrevLog:  types.LogHeader{Index: 1, Term: 1},
 		},
 		&AppendEntries{
 			Term:     1,
 			Leader:   2,
 			Commited: 1,
-			PrevLog:  LogHeader{Index: 1, Term: 1},
+			PrevLog:  types.LogHeader{Index: 1, Term: 1},
 		},
 		&AppendEntriesResponse{
 			Term:     1,
 			Follower: 1,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: 1},
+			LastLog:  types.LogHeader{Index: 1, Term: 1},
 		},
 		&AppendEntriesResponse{
 			Term:     1,
 			Follower: 3,
 			Success:  true,
-			LastLog:  LogHeader{Index: 1, Term: 1},
+			LastLog:  types.LogHeader{Index: 1, Term: 1},
 		},
 	})
 }
@@ -517,7 +517,7 @@ func TestRaftReplicatonWithMajority(t *testing.T) {
 
 	cluster.run(t, cluster.triggerTimeout(1), 1)
 	require.Len(t, cluster.proposals, 1)
-	require.Equal(t, raftlog.LogNoop, cluster.proposals[0].Entry.OpType)
+	require.Equal(t, types.Entry_NOOP, cluster.proposals[0].Entry.Type)
 }
 
 func TestRaftProposalReplication(t *testing.T) {
@@ -525,10 +525,10 @@ func TestRaftProposalReplication(t *testing.T) {
 	_ = cluster.run(t, cluster.triggerTimeout(1), 1)
 	cluster.resetHistory()
 
-	cluster.run(t, cluster.propose(1, &Proposal{Entry: &raftlog.LogEntry{OpType: raftlog.LogApplication}}), 1)
+	cluster.run(t, cluster.propose(1, &Proposal{Entry: &raftlog.Entry{Type: types.Entry_APP}}), 1)
 	require.Len(t, cluster.proposals, 2)
-	require.Equal(t, raftlog.LogNoop, cluster.proposals[0].Entry.OpType)
-	require.Equal(t, raftlog.LogApplication, cluster.proposals[1].Entry.OpType)
+	require.Equal(t, types.Entry_NOOP, cluster.proposals[0].Entry.Type)
+	require.Equal(t, types.Entry_APP, cluster.proposals[1].Entry.Type)
 }
 
 func TestRaftLogClean(t *testing.T) {
@@ -546,7 +546,7 @@ func TestRaftLogOverwrite(t *testing.T) {
 	cluster.run(t, cluster.triggerTimeout(1), 1)
 
 	for i := 1; i <= cluster.size; i++ {
-		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2, PrevLog: LogHeader{Index: 1}})
+		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2, PrevLog: types.LogHeader{Index: 1}})
 		require.True(t, cluster.logs[NodeID(i)].IsEmpty())
 	}
 }
@@ -555,9 +555,9 @@ func TestRaftReads(t *testing.T) {
 	cluster := getTestCluster(t)
 	leader := NodeID(1)
 	cluster.run(t, cluster.triggerTimeout(leader), leader)
-	rr1 := types.NewReadRequest(context.Background())
+	rr1 := NewReadRequest(context.Background())
 	u1 := cluster.propose(leader, rr1)
-	rr2 := types.NewReadRequest(context.Background())
+	rr2 := NewReadRequest(context.Background())
 	u2 := cluster.propose(leader, rr2)
 
 	cluster.applied(leader, 1)
@@ -790,7 +790,7 @@ func (c *clusterMachine) Propose(t *rapid.T) {
 	if c.state.leader == None {
 		t.Skip("leader is not yet elected")
 	}
-	update := c.cluster.propose(c.state.leader, &Proposal{Entry: &raftlog.LogEntry{OpType: raftlog.LogApplication}})
+	update := c.cluster.propose(c.state.leader, &Proposal{Entry: &raftlog.Entry{Type: types.Entry_APP}})
 	update = c.cluster.run(c.cleanup, update, c.state.leader)
 	if update != nil && update.Commit != 0 {
 		c.state.commit = update.Commit

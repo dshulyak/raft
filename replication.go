@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +66,7 @@ func (r *replicationChannel) Run() (err error) {
 	var (
 		timeout     = make(chan int)
 		out         chan<- Message
-		next        *AppendEntries
+		next        *types.AppendEntries
 		initialized bool
 	)
 	runTicker(r.ctx, timeout, r.tick)
@@ -85,10 +86,10 @@ func (r *replicationChannel) Run() (err error) {
 			}
 		case msg := <-r.in:
 			switch m := msg.(type) {
-			case *AppendEntriesResponse:
+			case *types.AppendEntriesResponse:
 				r.peer.onResponse(m)
 				next = r.peer.next()
-			case *AppendEntries:
+			case *types.AppendEntries:
 				if !initialized {
 					r.peer.init(m)
 					next = m

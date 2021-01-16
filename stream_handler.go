@@ -6,7 +6,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +39,7 @@ func (p *streamHandler) reader(stream MsgStream) error {
 		if err != nil {
 			return err
 		}
-		p.push(stream.ID(), msg)
+		p.push(stream.ID(), unwrap(msg))
 	}
 }
 
@@ -81,7 +80,7 @@ func (p *streamHandler) removeOutbound(id NodeID) {
 // negatively affect protocol.
 func (p *streamHandler) writer(stream MsgStream, closer chan struct{}) error {
 	var (
-		outbound chan types.Message
+		outbound chan Message
 		sema     = p.getSema(stream.ID())
 	)
 	defer func() {
@@ -98,7 +97,7 @@ func (p *streamHandler) writer(stream MsgStream, closer chan struct{}) error {
 		case <-p.ctx.Done():
 			return ErrStopped
 		case msg := <-outbound:
-			err := stream.Send(msg)
+			err := stream.Send(wrap(msg))
 			if err != nil {
 				return err
 			}

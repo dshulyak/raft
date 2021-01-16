@@ -65,7 +65,7 @@ func TestLinearizableRegister(t *testing.T) {
 		history []porcupine.Event
 
 		id   int64
-		iter = 1_000
+		iter = 100
 		key  = uint64(1)
 	)
 	client := func(reader bool, clientID int) {

@@ -213,10 +213,10 @@ type ReadRequest interface {
 }
 
 func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
-	proposal := types.NewProposal(n.ctx,
-		&raftlog.LogEntry{
-			OpType: raftlog.LogApplication,
-			Op:     data,
+	proposal := NewProposal(n.ctx,
+		&raftlog.Entry{
+			Type: types.Entry_APP,
+			Op:   data,
 		})
 
 	select {
@@ -240,7 +240,7 @@ func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 //
 // Read, unlike Proposal, bypasses raftlog but still requires coordination with followers to guarantee linearizability. If reading state data is not a problem client may ommit performing a Read on a raft node and go straight to the app.
 func (n *Node) Read(ctx context.Context) (ReadRequest, error) {
-	rr := types.NewReadRequest(n.ctx)
+	rr := NewReadRequest(n.ctx)
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

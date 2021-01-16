@@ -71,7 +71,7 @@ func (a *keyValueApp) decode(buf []byte, op *encodedOp) error {
 	return gob.NewDecoder(b).Decode(op)
 }
 
-func (a *keyValueApp) Apply(entry *raftlog.LogEntry) interface{} {
+func (a *keyValueApp) Apply(entry *raftlog.Entry) interface{} {
 	var op encodedOp
 	err := a.decode(entry.Op, &op)
 	if err == nil {
@@ -118,11 +118,11 @@ func TestApplyLogs(t *testing.T) {
 		op, err := app.Insert(i, i)
 		require.NoError(t, err)
 		require.NoError(t, storage.Append(
-			&raftlog.LogEntry{
-				Index:  i,
-				Term:   1,
-				OpType: raftlog.LogApplication,
-				Op:     op,
+			&raftlog.Entry{
+				Index: i,
+				Term:  1,
+				Type:  types.Entry_APP,
+				Op:    op,
 			},
 		))
 	}
@@ -146,17 +146,17 @@ func TestApplyLogs(t *testing.T) {
 
 	op, err := app.Delete(1)
 	require.NoError(t, err)
-	proposal := types.NewProposal(context.TODO(), &raftlog.LogEntry{
-		Index:  commit + 1,
-		Term:   1,
-		OpType: raftlog.LogApplication,
-		Op:     op,
+	proposal := NewProposal(context.TODO(), &raftlog.Entry{
+		Index: commit + 1,
+		Term:  1,
+		Type:  types.Entry_APP,
+		Op:    op,
 	})
 	commit++
 	select {
 	case <-time.After(time.Second):
 		require.FailNow(t, "timed out sending commit update")
-	case appSM.updates() <- &appUpdate{Commit: commit, Proposals: []*types.Proposal{proposal}}:
+	case appSM.updates() <- &appUpdate{Commit: commit, Proposals: []*Proposal{proposal}}:
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

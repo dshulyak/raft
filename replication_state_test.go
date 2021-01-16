@@ -3,7 +3,7 @@ package raft
 import (
 	"testing"
 
-	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,13 +14,14 @@ func TestPeerReplicationFromScratch(t *testing.T) {
 	msg := &AppendEntries{
 		Term:    1,
 		Leader:  1,
-		Entries: make([]*raftlog.LogEntry, 3),
+		PrevLog: types.LogHeader{},
+		Entries: make([]*types.Entry, 3),
 	}
 	for i := 1; i <= len(msg.Entries); i++ {
-		msg.Entries[i-1] = &raftlog.LogEntry{
-			Term:   msg.Term,
-			Index:  uint64(i),
-			OpType: raftlog.LogApplication,
+		msg.Entries[i-1] = &types.Entry{
+			Term:  msg.Term,
+			Index: uint64(i),
+			Type:  types.Entry_APP,
 		}
 	}
 	last := msg.Entries[len(msg.Entries)-1]
@@ -33,7 +34,7 @@ func TestPeerReplicationFromScratch(t *testing.T) {
 			Term:     msg.Term,
 			Follower: follower,
 			Success:  true,
-			LastLog: LogHeader{
+			LastLog: types.LogHeader{
 				Index: last.Index,
 				Term:  last.Term,
 			},
@@ -47,14 +48,14 @@ func TestPeerReplicationOutdated(t *testing.T) {
 	batch := uint64(20)
 	peer := cluster.replicationPeer(peerID, batch, 1)
 	log := cluster.logs[peerID]
-	entries := []*raftlog.LogEntry{}
+	entries := []*types.Entry{}
 	n := 10
 
 	for i := 1; i <= n; i++ {
-		entry := &raftlog.LogEntry{
-			Term:   1,
-			Index:  uint64(i),
-			OpType: raftlog.LogNoop,
+		entry := &types.Entry{
+			Term:  1,
+			Index: uint64(i),
+			Type:  types.Entry_NOOP,
 		}
 		require.NoError(t, log.Append(entry))
 		entries = append(entries, entry)
@@ -64,7 +65,7 @@ func TestPeerReplicationOutdated(t *testing.T) {
 	msg := &AppendEntries{
 		Term:    1,
 		Leader:  peerID,
-		PrevLog: LogHeader{Term: 1, Index: uint64(n)},
+		PrevLog: types.LogHeader{Term: 1, Index: uint64(n)},
 	}
 	follower := NodeID(2)
 	cluster.runReplication(peer, follower, msg)
@@ -79,7 +80,7 @@ func TestPeerReplicationOutdated(t *testing.T) {
 			&AppendEntries{
 				Term:    1,
 				Leader:  peerID,
-				PrevLog: LogHeader{Term: 1, Index: uint64(i)},
+				PrevLog: types.LogHeader{Term: 1, Index: uint64(i)},
 				Entries: entries[i:],
 			},
 			&AppendEntriesResponse{
@@ -92,14 +93,14 @@ func TestPeerReplicationOutdated(t *testing.T) {
 		&AppendEntries{
 			Term:    1,
 			Leader:  peerID,
-			PrevLog: LogHeader{Term: 0, Index: 0},
+			PrevLog: types.LogHeader{Term: 0, Index: 0},
 			Entries: entries,
 		},
 		&AppendEntriesResponse{
 			Term:     1,
 			Follower: follower,
 			Success:  true,
-			LastLog: LogHeader{
+			LastLog: types.LogHeader{
 				Term: 1, Index: uint64(n),
 			},
 		},

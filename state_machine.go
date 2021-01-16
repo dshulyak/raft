@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"runtime/debug"
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
@@ -31,13 +32,13 @@ var None NodeID
 type (
 	NodeID                = types.NodeID
 	LogHeader             = types.LogHeader
-	Message               = types.Message
 	RequestVote           = types.RequestVote
 	RequestVoteResponse   = types.RequestVoteResponse
 	AppendEntries         = types.AppendEntries
 	AppendEntriesResponse = types.AppendEntriesResponse
-	Proposal              = types.Proposal
 )
+
+type Message interface{}
 
 type MessageTo struct {
 	To      NodeID
@@ -212,7 +213,7 @@ type stateMachine struct {
 func (s *stateMachine) Tick(n int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
+			err = fmt.Errorf("%w: %v\n%s", ErrUnexpected, r, debug.Stack())
 		}
 	}()
 	r := s.role.tick(n, s.update)
@@ -225,7 +226,7 @@ func (s *stateMachine) Tick(n int) (err error) {
 func (s *stateMachine) Next(msg interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: %v", ErrUnexpected, r)
+			err = fmt.Errorf("%w: %v\n%s", ErrUnexpected, r, debug.Stack())
 		}
 	}()
 	r := s.role.next(msg, s.update)
@@ -383,7 +384,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		}
 	}
 
-	var last *raftlog.LogEntry
+	var last *types.Entry
 	for i := range msg.Entries {
 		last = msg.Entries[i]
 		f.must(f.log.Append(last), "failed to append log")
@@ -405,9 +406,11 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		Follower:  f.id,
 		Success:   true,
 		ReadIndex: msg.ReadIndex,
+		LastLog: types.LogHeader{
+			Index: last.Index,
+			Term:  last.Term,
+		},
 	}
-	resp.LastLog.Index = last.Index
-	resp.LastLog.Term = last.Term
 	f.send(u, resp, msg.Leader)
 	return nil
 }
@@ -507,9 +510,11 @@ func (c *candidate) campaign(preVote bool, u *Update) {
 		Term:      c.Term,
 		Candidate: c.id,
 		PreVote:   c.preVote,
+		LastLog: types.LogHeader{
+			Term:  last.Term,
+			Index: last.Index,
+		},
 	}
-	request.LastLog.Term = last.Term
-	request.LastLog.Index = last.Index
 
 	c.logger.Debugw("starting an election campaign", "candidate", c.id, "term", c.Term, "pre-vote mode", c.preVote)
 	c.send(u, request)
@@ -613,8 +618,8 @@ func toLeader(s *state, u *Update) *leader {
 		l.prevLog.Term = last.Term
 	}
 	// replicate noop in order to commit entries from previous terms
-	l.sendProposals(u, types.NewProposal(nil, &raftlog.LogEntry{
-		OpType: raftlog.LogNoop,
+	l.sendProposals(u, NewProposal(nil, &types.Entry{
+		Type: types.Entry_NOOP,
 	}))
 	u.State = RaftLeader
 	u.LeaderState = LeaderKnown
@@ -654,9 +659,11 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 		Term:     l.Term,
 		Leader:   l.id,
 		Commited: l.commitIndex,
+		PrevLog: types.LogHeader{
+			Term:  l.prevLog.Term,
+			Index: l.prevLog.Index,
+		},
 	}
-	msg.PrevLog.Index = l.prevLog.Index
-	msg.PrevLog.Term = l.prevLog.Term
 	for _, proposal := range proposals {
 		if proposal.Read() {
 			// readIndex is the same for all read requests submitted in a batch

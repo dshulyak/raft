@@ -5,12 +5,13 @@ import (
 	"sync/atomic"
 
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 type Application interface {
-	Apply(*raftlog.LogEntry) interface{}
+	Apply(*raftlog.Entry) interface{}
 }
 
 func newAppStateMachine(ctx context.Context, global *Config, group *errgroup.Group) *appStateMachine {
@@ -82,7 +83,7 @@ func (a *appStateMachine) run() (err error) {
 func (a *appStateMachine) onUpdate(u *appUpdate) error {
 	var (
 		recent   uint64
-		entry    *raftlog.LogEntry
+		entry    *raftlog.Entry
 		proposal *Proposal
 	)
 	if len(u.Proposals) > 0 {
@@ -103,7 +104,7 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 			}
 			entry = &ent
 		}
-		if entry.OpType == raftlog.LogApplication {
+		if entry.Type == types.Entry_APP {
 			a.logger.Debugw("applying entry", "index", entry.Index, "term", entry.Term, "proposed", proposal != nil)
 			result := a.app.Apply(entry)
 			if proposal != nil {

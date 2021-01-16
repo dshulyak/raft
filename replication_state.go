@@ -2,6 +2,7 @@ package raft
 
 import (
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
 
@@ -67,9 +68,12 @@ func (p *replicationState) tick(n int) {
 func (p *replicationState) sendHeartbeat() *AppendEntries {
 	p.heartbeat = p.heartbeatTimeout
 	return &AppendEntries{
-		Term:      p.term,
-		Leader:    p.id,
-		PrevLog:   p.sentLog,
+		Term:   p.term,
+		Leader: p.id,
+		PrevLog: types.LogHeader{
+			Term:  p.sentLog.Term,
+			Index: p.sentLog.Index,
+		},
 		Commited:  p.commitLogIndex,
 		ReadIndex: p.readIndex,
 	}
@@ -90,7 +94,7 @@ func (p *replicationState) next() *AppendEntries {
 
 	var (
 		d         = min(p.lastLog.Index-p.sentLog.Index, p.maxEntries)
-		entries   = make([]*raftlog.LogEntry, d)
+		entries   = make([]*types.Entry, d)
 		prevLog   = p.sentLog
 		nextIndex = int(p.sentLog.Index) + 1
 	)
@@ -116,9 +120,12 @@ func (p *replicationState) next() *AppendEntries {
 		p.sentLog.Term = entries[d-1].Term
 	}
 	msg := &AppendEntries{
-		Term:      p.term,
-		Leader:    p.id,
-		PrevLog:   prevLog,
+		Term:   p.term,
+		Leader: p.id,
+		PrevLog: types.LogHeader{
+			Term:  prevLog.Term,
+			Index: prevLog.Index,
+		},
 		Commited:  p.commitLogIndex,
 		Entries:   entries,
 		ReadIndex: p.readIndex,
