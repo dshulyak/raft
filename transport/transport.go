@@ -12,7 +12,6 @@ type (
 		// TODO refactor it to provide API such as
 		// Accept(context.Context) (MsgStream, error)
 		HandleStream(func(MsgStream))
-		Close() error
 	}
 
 	MsgStream interface {

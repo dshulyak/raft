@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package types;
+option go_package = "github.com/dshulyak/raft/types";
 
 import "github.com/gogo/protobuf/gogoproto/gogo.proto";
 

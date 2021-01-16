@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package stream;
+
+import "types/types.proto";
+
+service Raft {
+  rpc Pipe(stream types.Message) returns (stream types.Message) {}
+}

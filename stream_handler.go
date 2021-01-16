@@ -3,7 +3,6 @@ package raft
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 
 	"go.uber.org/zap"
@@ -123,9 +122,7 @@ func (p *streamHandler) handle(stream MsgStream) {
 
 	for err := range errc {
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				stream.Close()
-			}
+			stream.Close()
 			close(closer)
 			break
 		}
