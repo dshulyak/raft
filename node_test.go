@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/raft/chant"
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/transport/channel"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -21,7 +21,7 @@ type nodeCluster struct {
 	t      TestingHelper
 	logger *zap.SugaredLogger
 
-	net   *chant.Network
+	net   *channel.Network
 	nodes map[NodeID]*Node
 	apps  map[NodeID]*keyValueApp
 
@@ -43,7 +43,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	nc := &nodeCluster{
 		t:       t,
 		logger:  logger.Sugar(),
-		net:     chant.New(),
+		net:     channel.New(),
 		nodes:   map[NodeID]*Node{},
 		apps:    map[NodeID]*keyValueApp{},
 		ctx:     ctx,

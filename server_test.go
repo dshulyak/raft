@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/raft/chant"
+	"github.com/dshulyak/raft/transport/channel"
 	"github.com/stretchr/testify/require"
 )
 
 func TestServerConnect(t *testing.T) {
-	net := chant.New()
+	net := channel.New()
 	tr1 := net.Transport(1)
 	tr2 := net.Transport(2)
 	connected1 := make(chan NodeID)

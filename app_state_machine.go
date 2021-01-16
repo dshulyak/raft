@@ -5,10 +5,13 @@ import (
 	"sync/atomic"
 
 	"github.com/dshulyak/raft/raftlog"
-	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
+
+type Application interface {
+	Apply(*raftlog.LogEntry) interface{}
+}
 
 func newAppStateMachine(ctx context.Context, global *Config, group *errgroup.Group) *appStateMachine {
 	ctx, cancel := context.WithCancel(ctx)
@@ -34,7 +37,7 @@ type appStateMachine struct {
 
 	lastApplied uint64
 
-	app types.Application
+	app Application
 	log *raftlog.Storage
 
 	appliedC chan uint64

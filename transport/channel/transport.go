@@ -1,4 +1,4 @@
-package chant
+package channel
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/dshulyak/raft/transport"
 	"github.com/dshulyak/raft/types"
 )
 
@@ -118,7 +119,7 @@ func (n *Network) Close() {
 	n.cancel()
 }
 
-var _ types.Transport = (*Transport)(nil)
+var _ transport.Transport = (*Transport)(nil)
 
 type Transport struct {
 	network *Network
@@ -128,13 +129,13 @@ type Transport struct {
 
 	blocked *Blocked
 
-	handler func(types.MsgStream)
+	handler func(transport.MsgStream)
 
 	mu          sync.Mutex
 	connections map[types.NodeID]*Connection
 }
 
-func (t *Transport) Dial(ctx context.Context, n *types.Node) (types.MsgStream, error) {
+func (t *Transport) Dial(ctx context.Context, n *types.Node) (transport.MsgStream, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if n.ID == t.id {
@@ -188,7 +189,7 @@ func (t *Transport) Dial(ctx context.Context, n *types.Node) (types.MsgStream, e
 	return s1, nil
 }
 
-func (t *Transport) Accept(stream types.MsgStream) error {
+func (t *Transport) Accept(stream transport.MsgStream) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.handler == nil {
@@ -211,7 +212,7 @@ func (t *Transport) Close() error {
 	return nil
 }
 
-func (t *Transport) HandleStream(handler func(types.MsgStream)) {
+func (t *Transport) HandleStream(handler func(transport.MsgStream)) {
 	t.handler = handler
 }
 
@@ -290,7 +291,7 @@ func (c *Connection) deliver(from, to types.NodeID, r, w chan types.Message) err
 	}
 }
 
-var _ types.MsgStream = (*Stream)(nil)
+var _ transport.MsgStream = (*Stream)(nil)
 
 type Stream struct {
 	conn *Connection

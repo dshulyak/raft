@@ -4,14 +4,14 @@ import (
 	"context"
 	"sync"
 
-	"github.com/dshulyak/raft/types"
+	"github.com/dshulyak/raft/transport"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 type (
-	Transport = types.Transport
-	MsgStream = types.MsgStream
+	Transport = transport.Transport
+	MsgStream = transport.MsgStream
 )
 
 func newLastMessageSender(

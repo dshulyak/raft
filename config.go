@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/transport"
 	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 )
@@ -25,8 +26,8 @@ func IsPreVoteEnabled(flags uint32) bool {
 
 type Config struct {
 	ID        types.NodeID
-	Transport types.Transport
-	App       types.Application
+	Transport transport.Transport
+	App       Application
 
 	FeatureFlags uint32
 

@@ -1,4 +1,4 @@
-package chant
+package channel
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dshulyak/raft/transport"
 	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,7 @@ func TestMsgStream(t *testing.T) {
 	first := net.Transport(1)
 	second := net.Transport(2)
 	received := make(chan types.Message, 1)
-	second.HandleStream(func(stream types.MsgStream) {
+	second.HandleStream(func(stream transport.MsgStream) {
 		go func() {
 			for {
 				msg, err := stream.Receive()
@@ -69,7 +70,7 @@ func TestMsgReverse(t *testing.T) {
 	second := net.Transport(2)
 
 	n := 3333
-	second.HandleStream(func(stream types.MsgStream) {
+	second.HandleStream(func(stream transport.MsgStream) {
 		go func() {
 			for i := 0; i < n; i++ {
 				if err := stream.Send(i); err == io.EOF {
@@ -97,7 +98,7 @@ func TestStreamsBlocked(t *testing.T) {
 	second := net.Transport(2)
 
 	received := make(chan types.Message, 1)
-	second.HandleStream(func(stream types.MsgStream) {
+	second.HandleStream(func(stream transport.MsgStream) {
 		go func() {
 			for {
 				msg, err := stream.Receive()
