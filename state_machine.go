@@ -423,14 +423,17 @@ func min(i, j uint64) uint64 {
 }
 
 func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
-	if f.Term < msg.Term {
+	var (
+		grant   bool
+		context = ""
+		sync    bool
+	)
+	if msg.Term > f.Term {
 		f.Term = msg.Term
 		f.VotedFor = None
-		f.must(f.Sync(), "failed to sync durable state")
+		sync = true
 	}
-	var grant bool
-	context := "vote is not granted"
-	if f.linkTimeout > 0 && IsPreVoteEnabled(f.features) {
+	if msg.PreVote && f.linkTimeout > 0 && IsPreVoteEnabled(f.features) {
 		grant = false
 		context = "link timeout is not elapsed"
 	} else if msg.Term < f.Term {
@@ -446,12 +449,16 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	} else {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
 		context = "log is outdated"
-		if grant && !msg.PreVote {
+		if grant {
 			context = "log is newer than the local log"
-			f.VotedFor = msg.Candidate
-			f.Term = msg.Term
-			f.must(f.Sync(), "failed to sync durable state")
+			if !msg.PreVote {
+				f.VotedFor = msg.Candidate
+				sync = true
+			}
 		}
+	}
+	if sync {
+		f.must(f.Sync(), "failed to sync durable state")
 	}
 	if grant {
 		// do we reset timer if it is a pre-vote?
