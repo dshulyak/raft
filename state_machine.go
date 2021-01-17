@@ -433,6 +433,11 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		f.VotedFor = None
 		sync = true
 	}
+	// it is better to ignore the link timeout if candidate collected
+	// enough pre-votes. we probably already incremented the term and
+	// append entries from current leader will be ignored.
+	// so if link timeout was reset after candidate gathered enough pre-votes
+	// it will be faster to switch to a new leader
 	if msg.PreVote && f.linkTimeout > 0 && IsPreVoteEnabled(f.features) {
 		grant = false
 		context = "link timeout is not elapsed"
