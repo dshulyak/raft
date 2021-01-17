@@ -160,9 +160,10 @@ func (n *Node) sendMessages(u *Update) {
 		box, exist := n.mailboxes[msg.To]
 		if !exist {
 			box = &peerMailbox{
-				ctx:   n.ctx,
-				group: n.group,
-				mail:  n.streams.getOutbound(msg.To),
+				peerID: msg.To,
+				ctx:    n.ctx,
+				group:  n.group,
+				mail:   n.streams.getOutbound(msg.To),
 			}
 			n.mailboxes[msg.To] = box
 		}

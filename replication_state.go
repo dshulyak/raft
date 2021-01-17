@@ -168,6 +168,12 @@ func (p *replicationState) init(m *AppendEntries) {
 	p.prevLog = m.PrevLog
 	p.sentLog = m.PrevLog
 	p.lastLog = m.PrevLog
+	if len(m.Entries) > 0 {
+		last := len(m.Entries) - 1
+		p.lastLog.Index = m.Entries[last].Index
+		p.lastLog.Term = m.Entries[last].Term
+		p.sentLog = p.lastLog
+	}
 	p.commitLogIndex = m.Commited
 	p.readIndex = m.ReadIndex
 }

@@ -53,7 +53,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 	nc.client = nc.makeClient()
 
 	template := &Config{
-		EntriesPerAppend:       1,
+		EntriesPerAppend:       10,
 		ProposalsBuffer:        100,
 		PendingProposalsBuffer: 100,
 		Backoff:                100 * time.Millisecond,
@@ -97,7 +97,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		nc.nodes[c.ID] = n
 		t.Cleanup(func() {
 			n.Close()
-			require.NoError(nc.t, n.Wait())
+			n.Wait()
 		})
 	}
 	return nc
@@ -121,6 +121,7 @@ func (c *nodeCluster) makeClient() *clusterClient {
 func (c *nodeCluster) blockLeader() {
 	leader := c.client.knownLeader()
 	require.NotEqual(c.t, None, leader, "leader must be known")
+	c.logger.Debugw("blocking comms with a current leader", "id", leader)
 	for id := range c.nodes {
 		if id != leader {
 			c.net.Block(leader, id)
@@ -260,12 +261,13 @@ func TestNodeRecoverFromPartition(t *testing.T) {
 
 func TestNodeLeaderPartitioned(t *testing.T) {
 	c := newNodeCluster(t, 3)
-	failpoint := 4
+	failpoint := 10
 	ctx := context.TODO()
 	timeout := 500 * time.Millisecond
 
-	for i := 1; i <= 10; i++ {
-		if i == failpoint {
+	for i := 1; i <= 100; i++ {
+		if i%failpoint == 0 {
+			c.net.Restore()
 			c.blockLeader()
 		}
 		op, err := c.encoder.Insert(uint64(i), nil)

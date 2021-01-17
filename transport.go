@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/dshulyak/raft/transport"
+	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -90,6 +91,7 @@ type peerDeliveryChannel interface {
 //   and delivers it once the stream is opened/restored
 // in both cases peerMailbox is a non-blocking layer before the network
 type peerMailbox struct {
+	peerID  types.NodeID
 	ctx     context.Context
 	group   *errgroup.Group
 	mu      sync.Mutex
@@ -113,6 +115,7 @@ func (m *peerMailbox) Update(global *Config, state RaftState) {
 		m.current.Close()
 	}
 	logger := global.Logger.Sugar()
+	logger = logger.With("peer", m.peerID)
 	logger.Debugw("update peer mailbox type", "to leader", toLeader, "not leader", toNotLeader, "current", m.state, "next", state)
 	m.state = state
 	if toLeader {

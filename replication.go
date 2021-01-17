@@ -60,8 +60,8 @@ func (r *replicationChannel) Run() (err error) {
 		if rec != nil {
 			err = fmt.Errorf("%w: %v", ErrUnexpected, rec)
 			r.cancel()
+			r.logger.Errorw("replication channel crashed", "error", err)
 		}
-		r.logger.Errorw("replication channel exited", "error", err)
 	}()
 	var (
 		timeout     = make(chan int)

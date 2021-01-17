@@ -42,7 +42,7 @@ func (m *match) commited() uint64 {
 		i++
 	}
 	sort.Slice(indexes, func(i, j int) bool {
-		return indexes[i] < indexes[j]
+		return indexes[i] > indexes[j]
 	})
-	return indexes[(m.n+1)/2]
+	return indexes[(m.n)/2]
 }

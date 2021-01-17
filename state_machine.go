@@ -438,11 +438,16 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		context = "msg term is less than the local term"
 	} else if !msg.PreVote && (msg.Term == f.Term && f.VotedFor != None) {
 		grant = f.VotedFor == msg.Candidate
-		context = "already voted for this candidate in this term"
+		if grant {
+			context = "already voted for the candidate in this term"
+		} else {
+			context = "voted for a different candidate in this term"
+		}
 	} else {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
 		context = "log is outdated"
 		if grant && !msg.PreVote {
+			context = "log is newer than the local log"
 			f.VotedFor = msg.Candidate
 			f.Term = msg.Term
 			f.must(f.Sync(), "failed to sync durable state")
@@ -861,7 +866,7 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	if idx == 0 {
 		return nil
 	}
-	l.logger.Debugw("ready to update commit idx", "index", idx)
+	l.logger.Debugw("ready to update commit idx", "index", idx, "set", l.matchIndex.index)
 	// FIXME we are storing index starting at 0. but in the state machine
 	// first valid index starts with 1.
 	entry, err := l.log.Get(int(idx) - 1)

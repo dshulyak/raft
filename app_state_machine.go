@@ -100,6 +100,7 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 		} else {
 			ent, err := a.log.Get(int(next) - 1)
 			if err != nil {
+				a.logger.Errorw("app failed to get a log entry", "index", next, "error", err)
 				return err
 			}
 			entry = &ent
