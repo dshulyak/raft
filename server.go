@@ -6,9 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"math/rand"
-
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 var (
@@ -94,7 +93,7 @@ func (s *server) Add(node *ConfNode) {
 			ctx:         ctx,
 			cancel:      cancel,
 			dialTimeout: s.dialTimeout,
-			backoff:     s.backoff,
+			backoff:     rate.NewLimiter(rate.Every(s.backoff), 1),
 			tr:          s.tr,
 			node:        node,
 		}
@@ -144,7 +143,7 @@ func (s *server) accept(id NodeID, stream MsgStream) {
 			conn := s.getConnector(id)
 			if conn != nil {
 				var err error
-				stream, err = conn.dialWithBackoff()
+				stream, err = conn.dial()
 				if errors.Is(err, context.Canceled) {
 					return
 				}
@@ -178,11 +177,13 @@ type connector struct {
 	tr          Transport
 	node        *ConfNode
 
-	backoff   time.Duration
-	doBackoff bool
+	backoff *rate.Limiter
 }
 
 func (d *connector) dial() (MsgStream, error) {
+	if err := d.backoff.Wait(d.ctx); err != nil {
+		return nil, err
+	}
 	ctx := d.ctx
 	if d.dialTimeout > 0 {
 		var cancel func()
@@ -190,27 +191,6 @@ func (d *connector) dial() (MsgStream, error) {
 		defer cancel()
 	}
 	return d.tr.Dial(ctx, d.node)
-}
-
-func (d *connector) dialWithBackoff() (MsgStream, error) {
-	if d.doBackoff && d.backoff > 0 {
-		// potentially doubled
-		backoff := time.Duration(rand.Int63n(int64(d.backoff))) + d.backoff
-		timer := time.NewTimer(backoff)
-		defer timer.Stop()
-		select {
-		case <-d.ctx.Done():
-			return nil, d.ctx.Err()
-		case <-timer.C:
-		}
-	}
-	stream, err := d.dial()
-	if err != nil {
-		d.doBackoff = true
-	} else {
-		d.doBackoff = false
-	}
-	return stream, err
 }
 
 func (d *connector) close() {
