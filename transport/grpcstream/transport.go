@@ -29,6 +29,8 @@ func NewTransport(id types.NodeID, srv *grpc.Server, opts ...grpc.DialOption) *T
 	return tr
 }
 
+var _ transport.Transport = (*Transport)(nil)
+
 type Transport struct {
 	id types.NodeID
 
@@ -44,9 +46,7 @@ func (tr *Transport) Dial(ctx context.Context, node *types.Node) (transport.MsgS
 	if opts == nil {
 		opts = defaultDialOpts[:]
 	}
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%d", node.IP, node.Port),
-		opts...,
-	)
+	conn, err := grpc.DialContext(ctx, node.Address, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,13 +78,14 @@ func (tr *Transport) HandleStream(f func(transport.MsgStream)) {
 }
 
 func (tr *Transport) Pipe(st stream.Raft_PipeServer) error {
-
 	tr.mu.Lock()
 	handler := tr.handler
 	tr.mu.Unlock()
+
 	if handler == nil {
 		return errors.New("grpc server is not ready")
 	}
+
 	md, ok := metadata.FromIncomingContext(st.Context())
 	if !ok {
 		return errors.New("metadata with a peerID must be available")
@@ -113,6 +114,8 @@ type sendReceiver interface {
 	Send(*types.Message) error
 	Recv() (*types.Message, error)
 }
+
+var _ transport.MsgStream = (*Stream)(nil)
 
 type Stream struct {
 	peer types.NodeID

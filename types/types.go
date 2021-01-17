@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"net"
 	"strconv"
 )
 
@@ -21,13 +20,12 @@ func NodeIDFromString(id string) (NodeID, error) {
 }
 
 type Node struct {
-	ID   NodeID
-	IP   net.IP
-	Port int
+	ID      NodeID
+	Address string
 }
 
 func (n *Node) String() string {
-	return fmt.Sprintf("Node(id=%d,ip=%s,port=%d)", n.ID, n.IP, n.Port)
+	return fmt.Sprintf("Node(id=%d,address=%s)", n.ID, n.Address)
 }
 
 type Configuration struct {
