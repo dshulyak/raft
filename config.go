@@ -1,12 +1,15 @@
 package raft
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
 	"github.com/dshulyak/raft/transport"
 	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -24,6 +27,81 @@ func IsPreVoteEnabled(flags uint32) bool {
 	return flags&FeaturePreVote > 0
 }
 
+type ConfigOption func(conf *Config) error
+
+func BuildConfig(conf *Config, opts ...ConfigOption) error {
+	for _, opt := range opts {
+		if err := opt(conf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WithStorageAt pass after creating a Logger.
+// If logger is created in the other ConfigOption be sure that it precedes
+// WithStorageAt when passed to the BuildConfig.
+func WithStorageAt(path string) ConfigOption {
+	return func(conf *Config) error {
+		storage, err := raftlog.New(conf.Logger, &raftlog.IndexOptions{
+			File: filepath.Join(path, "index.raft"),
+		}, &raftlog.LogOptions{
+			File: filepath.Join(path, "wal.raft"),
+		})
+		if err != nil {
+			return err
+		}
+		conf.Storage = storage
+		return nil
+	}
+}
+
+func WithDurableStateAt(path string) ConfigOption {
+	return func(conf *Config) error {
+		f, err := os.OpenFile(
+			filepath.Join(path, "state.raft"), os.O_CREATE|os.O_RDWR, 0o660,
+		)
+		if err != nil {
+			return err
+		}
+		state, err := NewDurableState(f)
+		if err != nil {
+			return err
+		}
+		conf.State = state
+		return nil
+	}
+}
+
+func WithLogger(lvl string) ConfigOption {
+	return func(conf *Config) error {
+		var level zapcore.Level
+		if err := level.Set(lvl); err != nil {
+			return err
+		}
+		logger, err := zap.NewProduction(zap.IncreaseLevel(level))
+		if err != nil {
+			return err
+		}
+		conf.Logger = logger
+		return nil
+	}
+}
+
+var DefaultConfig = Config{
+	FeatureFlags:           FeaturePreVote,
+	EntriesPerAppend:       128,
+	ProposalsBuffer:        2048,
+	PendingProposalsBuffer: 2048,
+	DialTimeout:            100 * time.Millisecond,
+	Backoff:                200 * time.Millisecond,
+	TickInterval:           10 * time.Millisecond,
+	HeartbeatTimeout:       1,
+	ElectionTimeoutMin:     4,
+	ElectionTimeoutMax:     10,
+	Logger:                 zap.NewNop(),
+}
+
 type Config struct {
 	ID        types.NodeID
 	Transport transport.Transport
@@ -32,13 +110,13 @@ type Config struct {
 	FeatureFlags uint32
 
 	// EntriesPerAppend max number of entries in a single AppendEntries.
+	// TODO changes this to bytes
 	EntriesPerAppend int
 	// Proposals that are buffered by the node while state machine is busy.
+	// If this limit is reached proposals will fail with ErrProposalsOverflow.
 	ProposalsBuffer int
-	// ProposalsEvictionTimeout period since last batch of proposals were consumed
-	// by a raft state machine.
-	ProposalsEvictionTimeout time.Duration
 	// Proposals that are waiting for a confirmation from a majority of nodes.
+	// TODO if limit is reached node should stop accepting proposals.
 	PendingProposalsBuffer int
 
 	Storage *raftlog.Storage
