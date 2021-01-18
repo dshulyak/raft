@@ -41,12 +41,12 @@ func BuildConfig(conf *Config, opts ...ConfigOption) error {
 // WithStorageAt pass after creating a Logger.
 // If logger is created in the other ConfigOption be sure that it precedes
 // WithStorageAt when passed to the BuildConfig.
-func WithStorageAt(path string) ConfigOption {
+func WithStorageAt(dirPath string) ConfigOption {
 	return func(conf *Config) error {
 		storage, err := raftlog.New(conf.Logger, &raftlog.IndexOptions{
-			File: filepath.Join(path, "index.raft"),
+			File: filepath.Join(dirPath, "index.raft"),
 		}, &raftlog.LogOptions{
-			File: filepath.Join(path, "wal.raft"),
+			File: filepath.Join(dirPath, "wal.raft"),
 		})
 		if err != nil {
 			return err
@@ -56,10 +56,10 @@ func WithStorageAt(path string) ConfigOption {
 	}
 }
 
-func WithDurableStateAt(path string) ConfigOption {
+func WithStateAt(dirPath string) ConfigOption {
 	return func(conf *Config) error {
 		f, err := os.OpenFile(
-			filepath.Join(path, "state.raft"), os.O_CREATE|os.O_RDWR, 0o660,
+			filepath.Join(dirPath, "state.raft"), os.O_CREATE|os.O_RDWR, 0o660,
 		)
 		if err != nil {
 			return err
@@ -93,9 +93,9 @@ var DefaultConfig = Config{
 	EntriesPerAppend:       128,
 	ProposalsBuffer:        2048,
 	PendingProposalsBuffer: 2048,
-	DialTimeout:            100 * time.Millisecond,
+	DialTimeout:            200 * time.Millisecond,
 	Backoff:                200 * time.Millisecond,
-	TickInterval:           10 * time.Millisecond,
+	TickInterval:           100 * time.Millisecond,
 	HeartbeatTimeout:       1,
 	ElectionTimeoutMin:     4,
 	ElectionTimeoutMax:     10,

@@ -20,8 +20,15 @@ func NodeIDFromString(id string) (NodeID, error) {
 }
 
 type Node struct {
-	ID      NodeID
-	Address string
+	ID      NodeID `json:"id"`
+	Address string `json:"address"`
+
+	Info []InfoItem `json:"info"`
+}
+
+type InfoItem struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 func (n *Node) String() string {
@@ -29,7 +36,7 @@ func (n *Node) String() string {
 }
 
 type Configuration struct {
-	Nodes []Node
+	Nodes []Node `json:"nodes"`
 }
 
 type ConfChangeType uint8

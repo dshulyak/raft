@@ -76,8 +76,8 @@ type appUpdate struct {
 //
 // it will return future-like object that will be either failed or completed without error.
 // err := wr.Wait(ctx)
-// If error is nil wr.Result() will return an opaque interface{}. It is the same object
-// returned by the Apply method of the App interface.
+// If error is nil wr.WaitResult(ctx) will return an opaque interface{}.
+// It is the same object returned by the Apply method of the App interface.
 func NewNode(conf *Config) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 	group, ctx := errgroup.WithContext(ctx)

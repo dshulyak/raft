@@ -111,6 +111,8 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 			if proposal != nil {
 				proposal.Apply(result)
 			}
+		} else if entry.Type == types.Entry_NOOP {
+			a.logger.Debugw("entry is noop", "index", entry.Index, "term", entry.Term)
 		}
 		a.lastApplied = next
 	}

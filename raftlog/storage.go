@@ -103,8 +103,21 @@ func (s *Storage) Iterate(from, to int) *Iterator {
 	}
 }
 
+func (s *Storage) Close() error {
+	s.logger.Debug("closing storage")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// use multierr package
+	err1 := s.index.Close()
+	err2 := s.log.Close()
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
+
 func (s *Storage) Delete() error {
-	s.logger.Debugw("deleting storage")
+	s.logger.Debug("deleting storage")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err1 := s.index.Delete()

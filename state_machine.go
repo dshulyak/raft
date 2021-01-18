@@ -714,6 +714,7 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 	if msg.ReadIndex == 0 {
 		msg.ReadIndex = l.readIndex
 	}
+	l.updateReadIndex(l.id, l.readIndex, u)
 	if len(msg.Entries) > 0 {
 		l.prevLog.Index = msg.Entries[len(msg.Entries)-1].Index
 		l.prevLog.Term = l.Term
@@ -759,7 +760,7 @@ func (l *leader) notifyPending(err error) {
 		front.Value.(*Proposal).Complete(err)
 	}
 	for front := l.reads.Front(); front != nil; front = front.Next() {
-		front.Value.(*Proposal).Complete(err)
+		front.Value.(*readReq).proposal.Complete(err)
 	}
 }
 
@@ -854,6 +855,7 @@ func (l *leader) updateReadIndex(follower NodeID, index uint64, u *Update) {
 	}
 	acked := l.ackedRead.commited()
 	if acked > l.acked {
+		l.logger.Debugw("update acked read index", "prev", l.acked, "next", acked)
 		l.acked = acked
 		l.completePendingReads(u)
 	}
