@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"path"
@@ -74,10 +74,13 @@ func (s *server) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	val, set := s.app.Get(key)
 	if !set {
-		http.Error(w, "Is not set.", http.StatusNotFound)
+		http.Error(w, "Value is not set.", http.StatusNotFound)
 		return
 	}
-	_, _ = w.Write([]byte(val))
+	_, err = fmt.Fprintf(w, "%v\n", val)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (s *server) Write(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +114,7 @@ func (s *server) Write(w http.ResponseWriter, r *http.Request) {
 		handleError(w, r, err)
 		return
 	}
-	err = json.NewEncoder(w).Encode(rst)
+	_, err = fmt.Fprintf(w, "%v\n", rst)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
