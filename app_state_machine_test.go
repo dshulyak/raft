@@ -146,7 +146,7 @@ func TestApplyLogs(t *testing.T) {
 
 	op, err := app.Delete(1)
 	require.NoError(t, err)
-	proposal := NewProposal(context.TODO(), &raftlog.Entry{
+	proposal := newWriteRequest(context.TODO(), &raftlog.Entry{
 		Index: commit + 1,
 		Term:  1,
 		Type:  types.Entry_APP,
@@ -156,7 +156,7 @@ func TestApplyLogs(t *testing.T) {
 	select {
 	case <-time.After(time.Second):
 		require.FailNow(t, "timed out sending commit update")
-	case appSM.updates() <- &appUpdate{Commit: commit, Proposals: []*Proposal{proposal}}:
+	case appSM.updates() <- &appUpdate{Commit: commit, Proposals: []*request{proposal}}:
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

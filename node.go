@@ -24,14 +24,14 @@ var (
 
 type bufferedProposals struct {
 	max int
-	in  chan *Proposal
-	out chan []*Proposal
+	in  chan *request
+	out chan []*request
 }
 
 func (b bufferedProposals) run(ctx context.Context) {
 	var (
-		batch []*Proposal
-		out   chan []*Proposal
+		batch []*request
+		out   chan []*request
 	)
 	for {
 		if len(batch) == 0 {
@@ -59,7 +59,7 @@ func (b bufferedProposals) run(ctx context.Context) {
 
 type appUpdate struct {
 	Commit    uint64
-	Proposals []*Proposal
+	Proposals []*request
 }
 
 // NewNode creates instance of the raft node.
@@ -93,7 +93,7 @@ func NewNode(conf *Config) *Node {
 		mailboxes:    map[NodeID]*peerMailbox{},
 		messages:     make(chan Message, 1),
 		// proposals are buffered until node is ready to process them
-		proposals: make(chan *Proposal),
+		proposals: make(chan *request),
 	}
 	n.raft = newStateMachine(
 		conf.Logger,
@@ -141,7 +141,7 @@ type Node struct {
 	mailboxes map[NodeID]*peerMailbox
 
 	messages  chan Message
-	proposals chan *Proposal
+	proposals chan *request
 }
 
 func (n *Node) getMailbox(id NodeID) *peerMailbox {
@@ -214,7 +214,7 @@ type ReadRequest interface {
 }
 
 func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
-	proposal := NewProposal(n.ctx,
+	proposal := newWriteRequest(n.ctx,
 		&raftlog.Entry{
 			Type: types.Entry_APP,
 			Op:   data,
@@ -241,7 +241,7 @@ func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 //
 // Read, unlike Proposal, bypasses raftlog but still requires coordination with followers to guarantee linearizability. If reading state data is not a problem client may ommit performing a Read on a raft node and go straight to the app.
 func (n *Node) Read(ctx context.Context) (ReadRequest, error) {
-	rr := NewReadRequest(n.ctx)
+	rr := newReadRequest(n.ctx)
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -265,8 +265,8 @@ func (n *Node) run() (err error) {
 	defer n.logger.Debugw("node exited", "error", err)
 	var (
 		// node shouldn't consume from buffer until the leader is known
-		proposals        = make(chan []*Proposal)
-		blockedProposals chan []*Proposal
+		proposals        = make(chan []*request)
+		blockedProposals chan []*request
 
 		timeout = make(chan int)
 		app     *appUpdate

@@ -70,7 +70,7 @@ const (
 type Update struct {
 	Updated     bool
 	Msgs        []MessageTo
-	Proposals   []*Proposal
+	Proposals   []*request
 	LeaderState int
 	State       RaftState
 	Commit      uint64
@@ -314,7 +314,7 @@ func (f *follower) next(msg interface{}, u *Update) role {
 		return f.onRequestVote(m, u)
 	case *AppendEntries:
 		return f.onAppendEntries(m, u)
-	case []*Proposal:
+	case []*request:
 		if f.leader == None {
 			f.logger.Panicw("proposals can't be sent while leader is not elected")
 		}
@@ -597,14 +597,14 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 			return nil
 		}
 		return toLeader(c.state, u)
-	case []*Proposal:
+	case []*request:
 		c.logger.Panicw("proposals can't be sent while leader is not elected")
 	}
 	return nil
 }
 
 type readReq struct {
-	proposal *Proposal
+	proposal *request
 	// commitIndex at the time of request.
 	commitIndex uint64
 	// logical timestamp. once we got confirmation from majority
@@ -635,7 +635,7 @@ func toLeader(s *state, u *Update) *leader {
 		l.prevLog.Term = last.Term
 	}
 	// replicate noop in order to commit entries from previous terms
-	l.sendProposals(u, NewProposal(nil, &types.Entry{
+	l.sendProposals(u, newWriteRequest(nil, &types.Entry{
 		Type: types.Entry_NOOP,
 	}))
 	u.State = RaftLeader
@@ -671,7 +671,7 @@ type leader struct {
 	reads *list.List
 }
 
-func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
+func (l *leader) sendProposals(u *Update, proposals ...*request) {
 	msg := &AppendEntries{
 		Term:     l.Term,
 		Leader:   l.id,
@@ -699,6 +699,8 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 				commitIndex: l.commitIndex,
 				readIndex:   l.readIndex,
 			})
+
+			readCounter.Inc()
 			continue
 		}
 		entry := proposal.Entry
@@ -710,6 +712,8 @@ func (l *leader) sendProposals(u *Update, proposals ...*Proposal) {
 			"index", entry.Index, "term", entry.Term)
 		l.must(l.log.Append(entry), "failed to append a record")
 		_ = l.inflight.PushBack(proposal)
+
+		writeCounter.Inc()
 	}
 	if msg.ReadIndex == 0 {
 		msg.ReadIndex = l.readIndex
@@ -757,7 +761,7 @@ func (l *leader) tick(n int, u *Update) role {
 // notifyPending notifies both write and read requests submitters.
 func (l *leader) notifyPending(err error) {
 	for front := l.inflight.Front(); front != nil; front = front.Next() {
-		front.Value.(*Proposal).Complete(err)
+		front.Value.(*request).Complete(err)
 	}
 	for front := l.reads.Front(); front != nil; front = front.Next() {
 		front.Value.(*readReq).proposal.Complete(err)
@@ -777,13 +781,18 @@ func (l *leader) commitInflight(u *Update, idx uint64) {
 		l.completePendingReads(u)
 	}
 	for front := l.inflight.Front(); front != nil; {
-		proposal := front.Value.(*Proposal)
+		proposal := front.Value.(*request)
 		if proposal.Entry.Index > idx {
 			break
 		} else {
 			l.logger.Debugw("proposal is commited", "proposal", proposal)
 			u.Updated = true
+
 			proposal.Complete(nil)
+
+			commitedWriteCounter.Inc()
+			commitSec.Observe(time.Since(proposal.Created).Seconds())
+
 			u.Proposals = append(u.Proposals, proposal)
 			prev := front
 			front = front.Next()
@@ -824,9 +833,9 @@ func (l *leader) next(msg interface{}, u *Update) role {
 			return l.stepdown(m.Term, u)
 		}
 		return l.onAppendEntriesResponse(m, u)
-	case *Proposal:
+	case *request:
 		l.sendProposals(u, m)
-	case []*Proposal:
+	case []*request:
 		l.sendProposals(u, m...)
 	}
 	return nil
@@ -840,6 +849,10 @@ func (l *leader) completePendingReads(u *Update) {
 		rr := front.Value.(*readReq)
 		if l.appliedIndex >= rr.commitIndex && rr.readIndex <= l.acked {
 			rr.proposal.Complete(nil)
+
+			completedReadCounter.Inc()
+			readSec.Observe(time.Since(rr.proposal.Created).Seconds())
+
 			prev := front
 			front = front.Next()
 			l.reads.Remove(prev)

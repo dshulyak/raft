@@ -115,7 +115,7 @@ type testCluster struct {
 	messages      []interface{}
 	blockedRoutes map[NodeID]map[NodeID]struct{}
 
-	proposals []*Proposal
+	proposals []*request
 }
 
 func (t *testCluster) restart(id NodeID) {
@@ -147,7 +147,7 @@ func (t *testCluster) replicationPeer(id NodeID, maxEntries uint64, timeout int)
 	return newReplicationState(t.logger.Sugar(), maxEntries, timeout, t.logs[id])
 }
 
-func (t *testCluster) propose(id NodeID, proposal *Proposal) *Update {
+func (t *testCluster) propose(id NodeID, proposal *request) *Update {
 	require.NoError(t.t, t.states[id].Next(proposal))
 	return t.states[id].Update()
 }
@@ -525,7 +525,7 @@ func TestRaftProposalReplication(t *testing.T) {
 	_ = cluster.run(t, cluster.triggerTimeout(1), 1)
 	cluster.resetHistory()
 
-	cluster.run(t, cluster.propose(1, &Proposal{Entry: &raftlog.Entry{Type: types.Entry_APP}}), 1)
+	cluster.run(t, cluster.propose(1, &request{Entry: &raftlog.Entry{Type: types.Entry_APP}}), 1)
 	require.Len(t, cluster.proposals, 2)
 	require.Equal(t, types.Entry_NOOP, cluster.proposals[0].Entry.Type)
 	require.Equal(t, types.Entry_APP, cluster.proposals[1].Entry.Type)
@@ -555,9 +555,9 @@ func TestRaftReads(t *testing.T) {
 	cluster := getTestCluster(t)
 	leader := NodeID(1)
 	cluster.run(t, cluster.triggerTimeout(leader), leader)
-	rr1 := NewReadRequest(context.Background())
+	rr1 := newReadRequest(context.Background())
 	u1 := cluster.propose(leader, rr1)
-	rr2 := NewReadRequest(context.Background())
+	rr2 := newReadRequest(context.Background())
 	u2 := cluster.propose(leader, rr2)
 
 	cluster.applied(leader, 1)
@@ -790,7 +790,7 @@ func (c *clusterMachine) Propose(t *rapid.T) {
 	if c.state.leader == None {
 		t.Skip("leader is not yet elected")
 	}
-	update := c.cluster.propose(c.state.leader, &Proposal{Entry: &raftlog.Entry{Type: types.Entry_APP}})
+	update := c.cluster.propose(c.state.leader, &request{Entry: &raftlog.Entry{Type: types.Entry_APP}})
 	update = c.cluster.run(c.cleanup, update, c.state.leader)
 	if update != nil && update.Commit != 0 {
 		c.state.commit = update.Commit

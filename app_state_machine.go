@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/dshulyak/raft/raftlog"
 	"github.com/dshulyak/raft/types"
@@ -84,7 +85,7 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 	var (
 		recent   uint64
 		entry    *raftlog.Entry
-		proposal *Proposal
+		proposal *request
 	)
 	if len(u.Proposals) > 0 {
 		recent = u.Proposals[0].Entry.Index
@@ -114,6 +115,11 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 		} else if entry.Type == types.Entry_NOOP {
 			a.logger.Debugw("entry is noop", "index", entry.Index, "term", entry.Term)
 		}
+		if proposal != nil {
+			applySec.Observe(time.Since(proposal.Created).Seconds())
+			appliedWriteCounter.Inc()
+		}
+
 		a.lastApplied = next
 	}
 	return nil
