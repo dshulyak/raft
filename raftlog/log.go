@@ -101,7 +101,7 @@ func NewLog(zlog *zap.Logger, last *IndexEntry, opts *LogOptions) (*Log, error) 
 	return log, nil
 }
 
-type FileBackend interface {
+type fileBackend interface {
 	io.Writer
 	Flush() error
 }
@@ -113,10 +113,15 @@ type Log struct {
 
 	mu sync.RWMutex
 	f  *os.File
-	w  FileBackend
+	w  fileBackend
 }
 
 func (l *Log) init(lastIndex *IndexEntry, opts *LogOptions) error {
+	if opts == nil || opts.BufferSize == 0 {
+		l.w = bufio.NewWriter(l.f)
+	} else {
+		l.w = bufio.NewWriterSize(l.f, int(opts.BufferSize))
+	}
 	stat, err := l.f.Stat()
 	if err != nil {
 		return err
@@ -141,11 +146,6 @@ func (l *Log) init(lastIndex *IndexEntry, opts *LogOptions) error {
 		if err := l.Truncate(offset); err != nil {
 			return err
 		}
-	}
-	if opts == nil || opts.BufferSize == 0 {
-		l.w = bufio.NewWriter(l.f)
-	} else {
-		l.w = bufio.NewWriterSize(l.f, int(opts.BufferSize))
 	}
 	return nil
 }

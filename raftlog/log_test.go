@@ -3,6 +3,7 @@ package raftlog
 import (
 	"errors"
 	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/dshulyak/raft/types"
@@ -36,7 +37,7 @@ func TestLogAppendGet(t *testing.T) {
 }
 
 func TestLogCRCVerification(t *testing.T) {
-	f, err := ioutil.TempFile("", "log-test-file-XXX")
+	f, err := ioutil.TempFile("", "log-test-file-")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, f.Close())
@@ -57,6 +58,32 @@ func TestLogCRCVerification(t *testing.T) {
 
 	var entry Entry
 	require.True(t, errors.Is(log.Get(&IndexEntry{Offset: offset, Length: size}, &entry), ErrLogCorrupted))
+}
+
+func TestLogReopen(t *testing.T) {
+	f, err := ioutil.TempFile("", "log-test-file-")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	t.Cleanup(func() {
+		require.NoError(t, os.Remove(f.Name()))
+	})
+
+	log, err := NewLog(testLogger(t), nil, &LogOptions{File: f.Name()})
+	require.NoError(t, err)
+
+	total := 100
+	for i := 0; i < total; i++ {
+		_, err := log.Append(&types.Entry{})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, log.Close())
+
+	log, err = NewLog(testLogger(t), nil, &LogOptions{File: f.Name()})
+	require.NoError(t, err)
+	_, err = log.Append(&types.Entry{})
+	require.NoError(t, err)
 }
 
 func BenchmarkLogAppend(b *testing.B) {
