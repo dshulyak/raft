@@ -228,6 +228,7 @@ func (c *testCluster) iterateLogs(f func(*raftlog.Storage) bool) {
 }
 
 func (c *testCluster) compareMsgHistories(expected []interface{}) {
+	c.t.Helper()
 	c.compareMsgs(expected, c.messages)
 }
 
@@ -389,16 +390,18 @@ func TestRaftLeaderDisrupted(t *testing.T) {
 			VoteGranted: true,
 		},
 		&AppendEntries{
-			Term:    2,
-			Leader:  2,
-			Entries: []*raftlog.Entry{{Index: 2, Term: 2, Type: types.Entry_NOOP}},
-			PrevLog: types.LogHeader{Term: 1, Index: 1},
+			Term:     2,
+			Leader:   2,
+			Commited: 1,
+			Entries:  []*raftlog.Entry{{Index: 2, Term: 2, Type: types.Entry_NOOP}},
+			PrevLog:  types.LogHeader{Term: 1, Index: 1},
 		},
 		&AppendEntries{
-			Term:    2,
-			Leader:  2,
-			Entries: []*raftlog.Entry{{Index: 2, Term: 2, Type: types.Entry_NOOP}},
-			PrevLog: types.LogHeader{Term: 1, Index: 1},
+			Term:     2,
+			Leader:   2,
+			Commited: 1,
+			Entries:  []*raftlog.Entry{{Index: 2, Term: 2, Type: types.Entry_NOOP}},
+			PrevLog:  types.LogHeader{Term: 1, Index: 1},
 		},
 		&AppendEntriesResponse{
 			Term:     2,
