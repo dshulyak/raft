@@ -72,6 +72,7 @@ func NewIndex(log *zap.Logger, nextOffset uint64, opts *IndexOptions) (*Index, e
 	if err != nil {
 		return nil, err
 	}
+	size = int(stat.Size())
 	if stat.Size() == 0 {
 		if opts == nil || opts.DefaultSize == 0 {
 			size = initialIndexSize
@@ -83,7 +84,6 @@ func NewIndex(log *zap.Logger, nextOffset uint64, opts *IndexOptions) (*Index, e
 	if err := index.setup(size); err != nil {
 		return nil, err
 	}
-	index.init()
 	return index, nil
 }
 
@@ -123,15 +123,12 @@ func (i *Index) setup(size int) error {
 	if size != 0 {
 		i.maxLogIndex = uint64(size) / entryWidth
 	}
-	return nil
-}
-
-func (i *Index) init() {
 	idx := sort.Search(int(i.maxLogIndex), func(j int) bool {
 		entry := i.Get(uint64(j))
 		return entry.Offset == 0 && entry.Length == 0
 	})
 	i.nextLogIndex = uint64(idx)
+	return nil
 }
 
 func (i *Index) grow() error {

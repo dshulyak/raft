@@ -2,6 +2,8 @@ package raftlog
 
 import (
 	"flag"
+	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,11 +42,30 @@ func TestIndexGetAppend(t *testing.T) {
 	}
 }
 
-func TestIndexInit(t *testing.T) {
-	index, err := NewIndex(testLogger(t), 0, &IndexOptions{DefaultSize: 16})
+func TestIndexReopen(t *testing.T) {
+	f, err := ioutil.TempFile("", "test-index-")
 	require.NoError(t, err)
-	require.NoError(t, index.Append(10))
-	index.init()
+	require.NoError(t, f.Close())
+
+	t.Cleanup(func() {
+		require.NoError(t, os.Remove(f.Name()))
+	})
+
+	index, err := NewIndex(testLogger(t), 0, &IndexOptions{File: f.Name()})
+	require.NoError(t, err)
+	n := 100
+	size := 1
+	for i := 0; i < n; i++ {
+		require.NoError(t, index.Append(uint64(size)))
+	}
+
+	require.NoError(t, index.Close())
+
+	index, err = NewIndex(testLogger(t), 0, &IndexOptions{File: f.Name()})
+	require.NoError(t, err)
+
+	ie := index.LastIndex()
+	require.Equal(t, (n-1)*size, int(ie.Offset))
 }
 
 func BenchmarkIndexTruncate(b *testing.B) {
