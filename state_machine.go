@@ -399,8 +399,8 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			"term", last.Term,
 		)
 		f.must(f.log.Sync(), "failed to persist the log on disk")
-		f.commit(u, min(msg.Commited, last.Index))
 	}
+	f.commit(u, min(msg.Commited, last.Index))
 	resp := &AppendEntriesResponse{
 		Term:      f.Term,
 		Follower:  f.id,

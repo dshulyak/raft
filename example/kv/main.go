@@ -107,7 +107,7 @@ func main() {
 	// SETUP CONFIG FOR RAFT NODE
 	//
 
-	app := newKv()
+	app := newKv(logger)
 
 	conf := raft.DefaultConfig
 	conf.ID = types.NodeID(*id)
@@ -127,7 +127,10 @@ func main() {
 
 	rnode := raft.NewNode(&conf)
 	group.Go(func() error {
-		return rnode.Wait()
+		err := rnode.Wait()
+		conf.Storage.Close()
+		conf.State.Close()
+		return err
 	})
 
 	//
@@ -155,9 +158,6 @@ func main() {
 		rnode.Close()
 		gsrv.GracefulStop()
 		hsrv.Close()
-
-		conf.Storage.Close()
-		conf.State.Close()
 		return nil
 	})
 

@@ -42,13 +42,13 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 			for i := range node.Info {
 				item := &node.Info[i]
 				if item.Key == clientURL {
-					vars := mux.Vars(r)
 					w.Header().Set(
 						"Location",
-						path.Join(item.Value, "get", vars["key"]),
+						path.Join(item.Value, r.URL.Path),
 					)
 					http.Error(w, "Redirect to the current leader.",
 						http.StatusFound)
+					return
 				}
 			}
 		}
@@ -74,7 +74,7 @@ func (s *server) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	val, set := s.app.Get(key)
 	if !set {
-		http.Error(w, "Not set", http.StatusNotFound)
+		http.Error(w, "Is not set.", http.StatusNotFound)
 		return
 	}
 	_, _ = w.Write([]byte(val))
@@ -111,5 +111,8 @@ func (s *server) Write(w http.ResponseWriter, r *http.Request) {
 		handleError(w, r, err)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(rst)
+	err = json.NewEncoder(w).Encode(rst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
