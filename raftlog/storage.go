@@ -12,7 +12,7 @@ var (
 )
 
 func New(logger *zap.Logger, iopts *IndexOptions, lopts *LogOptions) (*Storage, error) {
-	index, err := NewIndex(logger, logHeaderWidth, iopts)
+	index, err := NewIndex(logger, iopts)
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +91,6 @@ func (s *Storage) DeleteFrom(start int) error {
 	return s.log.Truncate(offset)
 }
 
-// Iterate from start to the end. If end is 0 iterator will iterate til the last indexed log. Both boundaries are inclusive.
-func (s *Storage) Iterate(from, to int) *Iterator {
-	idx := s.index.Get(uint64(from))
-	return &Iterator{
-		index:   s.index,
-		scanner: s.log.Scanner(&idx),
-		from:    from,
-		to:      to,
-		current: from,
-	}
-}
-
 func (s *Storage) Close() error {
 	s.logger.Debug("closing storage")
 	s.mu.Lock()
@@ -126,43 +114,4 @@ func (s *Storage) Delete() error {
 		return err1
 	}
 	return err2
-}
-
-type Iterator struct {
-	index    *Index
-	scanner  *LogScanner
-	from, to int
-
-	current int
-	err     error
-	entry   *Entry
-}
-
-func (i *Iterator) Error() error {
-	return i.err
-}
-
-func (i *Iterator) Next() bool {
-	if i.current > i.to && i.to != 0 || i.err != nil {
-		return false
-	}
-	idx := i.index.Get(uint64(i.current))
-	if idx.Offset == 0 {
-		i.to = -1
-		return false
-	}
-	i.entry, i.err = i.scanner.Scan(idx.Length)
-	if errors.Is(i.err, ErrLogEnd) {
-		i.to = -1
-		i.err = nil
-		return false
-	} else if i.err != nil {
-		return false
-	}
-	i.current++
-	return true
-}
-
-func (i *Iterator) Entry() *Entry {
-	return i.entry
 }

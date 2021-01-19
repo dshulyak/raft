@@ -19,7 +19,7 @@ func TestLogAppendGet(t *testing.T) {
 
 	entries := 100000
 	offsets := make([]IndexEntry, entries)
-	offset := log.HeaderSize()
+	offset := uint64(0)
 	for i := 0; i < entries; i++ {
 		size, err := log.Append(&Entry{
 			Index: uint64(i),
@@ -52,7 +52,7 @@ func TestLogCRCVerification(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, log.Flush())
 
-	offset := log.HeaderSize()
+	offset := uint64(0)
 	_, err = f.WriteAt([]byte{1, 2, 3}, int64(offset+size/2))
 	require.NoError(t, err)
 

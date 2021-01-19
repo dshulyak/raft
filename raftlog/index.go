@@ -52,7 +52,7 @@ type IndexOptions struct {
 	DefaultSize int
 }
 
-func NewIndex(log *zap.Logger, nextOffset uint64, opts *IndexOptions) (*Index, error) {
+func NewIndex(log *zap.Logger, opts *IndexOptions) (*Index, error) {
 	var (
 		f      *os.File
 		size   int
@@ -80,7 +80,7 @@ func NewIndex(log *zap.Logger, nextOffset uint64, opts *IndexOptions) (*Index, e
 			size = opts.DefaultSize
 		}
 	}
-	index := &Index{logger: logger, f: f, initialOffset: nextOffset, nextOffset: nextOffset}
+	index := &Index{logger: logger, f: f}
 	if err := index.setup(size); err != nil {
 		return nil, err
 	}
@@ -91,9 +91,8 @@ func NewIndex(log *zap.Logger, nextOffset uint64, opts *IndexOptions) (*Index, e
 type Index struct {
 	logger *zap.SugaredLogger
 
-	mu            sync.RWMutex
-	initialOffset uint64
-	nextOffset    uint64
+	mu         sync.RWMutex
+	nextOffset uint64
 	// configured at the time of setup. might not be 0 if snapshot exists
 	firstLogIndex uint64
 	// incremented on every insertion
@@ -124,10 +123,14 @@ func (i *Index) setup(size int) error {
 		i.maxLogIndex = uint64(size) / entryWidth
 	}
 	idx := sort.Search(int(i.maxLogIndex), func(j int) bool {
-		entry := i.Get(uint64(j))
+		entry := i.get(uint64(j))
 		return entry.Offset == 0 && entry.Length == 0
 	})
 	i.nextLogIndex = uint64(idx)
+	if idx > 0 {
+		last := i.get(i.nextLogIndex - 1)
+		i.nextOffset = last.Offset + last.Length
+	}
 	return nil
 }
 

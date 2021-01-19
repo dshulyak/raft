@@ -11,34 +11,15 @@ import (
 func TestStorageLastEmpty(t *testing.T) {
 	store, err := New(testLogger(t), nil, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {require.NoError(t, store.Delete())})
+	t.Cleanup(func() { require.NoError(t, store.Delete()) })
 	_, err = store.Last()
 	require.True(t, errors.Is(err, ErrEmptyLog), "expected empty log error")
-}
-
-func TestStorageIterate(t *testing.T) {
-	store, err := New(testLogger(t), nil, nil)
-	require.NoError(t, err)
-t.Cleanup(func() {require.NoError(t, store.Delete())})	
-entries := 10000
-	for i := 0; i < entries; i++ {
-		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
-	}
-	require.NoError(t, store.Sync())
-	iter := store.Iterate(0, 0)
-
-	for i := 0; i < entries; i++ {
-		iter.Next()
-		require.NoError(t, iter.Error())
-		require.Equal(t, i, int(iter.Entry().Index))
-	}
-	require.False(t, iter.Next())
 }
 
 func TestStorageDeleteAppend(t *testing.T) {
 	store, err := New(testLogger(t), nil, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {require.NoError(t, store.Delete())})
+	t.Cleanup(func() { require.NoError(t, store.Delete()) })
 
 	entries := 2
 	for i := 0; i < entries; i++ {
@@ -60,7 +41,7 @@ func TestStorageDeleteAppend(t *testing.T) {
 func TestStorageLogDeletion(t *testing.T) {
 	store, err := New(testLogger(t), nil, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {require.NoError(t, store.Delete())})
+	t.Cleanup(func() { require.NoError(t, store.Delete()) })
 	entries := 1000
 	for i := 0; i < entries; i++ {
 		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
@@ -68,12 +49,12 @@ func TestStorageLogDeletion(t *testing.T) {
 	require.NoError(t, store.Sync())
 	from := 100
 	require.NoError(t, store.DeleteFrom(from))
-	iter := store.Iterate(0, 0)
+
 	for i := 0; i < from; i++ {
-		_ = iter.Next()
-		require.Equal(t, i, int(iter.Entry().Index))
+		entry, err := store.Get(i)
+		require.NoError(t, err)
+		require.Equal(t, i, int(entry.Index))
 	}
-	require.NoError(t, iter.Error())
 
 	require.NoError(t, store.DeleteFrom(0))
 	require.True(t, store.IsEmpty())
@@ -129,19 +110,17 @@ func (s *storageMachine) Sync(t *rapid.T) {
 }
 
 func (s *storageMachine) Check(t *rapid.T) {
-	iter := s.storage.Iterate(0, 0)
 	for i := range s.logs {
-		_ = iter.Next()
-		entry := iter.Entry()
-		require.Equal(t, s.logs[i], *entry)
+
+		entry, err := s.storage.Get(int(s.logs[i].Index))
+		require.NoError(t, err)
+		require.Equal(t, s.logs[i], entry)
 	}
-	require.NoError(t, iter.Error())
 }
 
 func (s *storageMachine) Cleanup() {
 	_ = s.storage.Delete()
 }
-
 
 func TestStorageProperties(t *testing.T) {
 	if testing.Short() {

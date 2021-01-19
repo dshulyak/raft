@@ -2,7 +2,6 @@ package raftlog
 
 import (
 	"bufio"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -17,10 +16,9 @@ import (
 )
 
 const (
-	logHeaderWidth  uint64 = 64
-	opTypeSize             = 1
-	writeBufferSize        = 4096 * 16
-	scanBufferSize         = writeBufferSize
+	opTypeSize      = 1
+	writeBufferSize = 4096 * 16
+	scanBufferSize  = writeBufferSize
 )
 
 var (
@@ -28,21 +26,6 @@ var (
 	ErrEntryNotFound = errors.New("entry not found")
 	ErrLogEnd        = errors.New("log end")
 )
-
-func uvarintSize(x uint64) uint64 {
-	i := uint64(0)
-	for x >= 0x80 {
-		x >>= 7
-		i++
-	}
-	return i + 1
-}
-
-type LogHeader struct {
-	Version    [10]byte
-	FirstIndex uint64
-	_          [46]byte
-}
 
 type Entry = types.Entry
 
@@ -72,27 +55,12 @@ func NewLog(zlog *zap.Logger, last *IndexEntry, opts *LogOptions) (*Log, error) 
 	if err != nil {
 		return nil, err
 	}
-	stat, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	var header LogHeader
-	if stat.Size() == 0 {
-		if err := binary.Write(f, binary.BigEndian, header); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := binary.Read(f, binary.BigEndian, &header); err != nil {
-			return nil, err
-		}
-	}
 	if err := unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_SEQUENTIAL); err != nil {
 		return nil, err
 	}
 	log := &Log{
 		logger: logger,
 		f:      f,
-		header: header,
 	}
 	if err := log.init(last, opts); err != nil {
 		return nil, err
@@ -108,8 +76,6 @@ type fileBackend interface {
 
 type Log struct {
 	logger *zap.SugaredLogger
-
-	header LogHeader
 
 	mu sync.RWMutex
 	f  *os.File
@@ -148,18 +114,6 @@ func (l *Log) init(lastIndex *IndexEntry, opts *LogOptions) error {
 		}
 	}
 	return nil
-}
-
-func (l *Log) HeaderSize() uint64 {
-	return logHeaderWidth
-}
-
-func (l *Log) Version() [10]byte {
-	return l.header.Version
-}
-
-func (l *Log) FirstIndex() uint64 {
-	return l.header.FirstIndex
 }
 
 func (l *Log) Truncate(offset uint64) error {
@@ -245,53 +199,4 @@ func (l *Log) Delete() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return os.Remove(l.f.Name())
-}
-
-func (l *Log) Scanner(from *IndexEntry) *LogScanner {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return &LogScanner{
-		reader: bufio.NewReaderSize(&offsetReader{
-			offset: int64(from.Offset),
-			reader: l.f,
-		}, scanBufferSize),
-	}
-}
-
-type LogScanner struct {
-	reader io.Reader
-}
-
-func (s *LogScanner) Scan(size uint64) (*Entry, error) {
-	buf := make([]byte, size)
-	total := 0
-	for total < int(size) {
-		n, err := s.reader.Read(buf[total:])
-		if err != nil && errors.Is(err, io.EOF) {
-			return nil, ErrLogEnd
-		} else if err != nil {
-			return nil, err
-		}
-		total += n
-	}
-	if !cmpCrc32(buf, buf[crcSize:]) {
-		return nil, ErrLogCorrupted
-	}
-	var entry Entry
-	err := entry.Unmarshal(buf[crcSize:])
-	if err != nil {
-		return nil, err
-	}
-	return &entry, nil
-}
-
-type offsetReader struct {
-	offset int64
-	reader io.ReaderAt
-}
-
-func (r *offsetReader) Read(buf []byte) (int, error) {
-	n, err := r.reader.ReadAt(buf, r.offset)
-	r.offset += int64(n)
-	return n, err
 }

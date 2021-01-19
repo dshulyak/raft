@@ -29,7 +29,7 @@ func testLogger(t TestingI) *zap.Logger {
 func TestIndexGetAppend(t *testing.T) {
 	items := 1200
 	initial := items/2 - items/4
-	index, err := NewIndex(testLogger(t), 0, &IndexOptions{DefaultSize: initial * int(entryWidth)})
+	index, err := NewIndex(testLogger(t), &IndexOptions{DefaultSize: initial * int(entryWidth)})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		index.Delete()
@@ -51,7 +51,7 @@ func TestIndexReopen(t *testing.T) {
 		require.NoError(t, os.Remove(f.Name()))
 	})
 
-	index, err := NewIndex(testLogger(t), 0, &IndexOptions{File: f.Name()})
+	index, err := NewIndex(testLogger(t), &IndexOptions{File: f.Name()})
 	require.NoError(t, err)
 	n := 100
 	size := 1
@@ -61,7 +61,7 @@ func TestIndexReopen(t *testing.T) {
 
 	require.NoError(t, index.Close())
 
-	index, err = NewIndex(testLogger(t), 0, &IndexOptions{File: f.Name()})
+	index, err = NewIndex(testLogger(t), &IndexOptions{File: f.Name()})
 	require.NoError(t, err)
 
 	ie := index.LastIndex()
@@ -69,7 +69,7 @@ func TestIndexReopen(t *testing.T) {
 }
 
 func BenchmarkIndexTruncate(b *testing.B) {
-	index, err := NewIndex(testLogger(b), 0, &IndexOptions{DefaultSize: 0xffff})
+	index, err := NewIndex(testLogger(b), &IndexOptions{DefaultSize: 0xffff})
 	require.NoError(b, err)
 
 	b.ResetTimer()
