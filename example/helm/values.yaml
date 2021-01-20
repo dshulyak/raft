@@ -1,0 +1,35 @@
+image:
+  repository: localhost:32000/raft-kv
+  pullPolicy: IfNotPresent
+  tag: latest
+
+# dataDir will be mounted for each pod.
+dataDir: /raft
+
+logLevel: debug
+
+# id must be unique.
+
+# raftPort is a grpc service that is used for internal comms
+# it will be used with internal dns names and can be the same for every pod
+# in the stateful set
+raftPort: 4000
+
+# kvPort is a http service for user requests
+# all pods must be exposed therefore each one will have a service with a
+# a distinct selector. this service will expose pods kvPort as exposeKvPortAs
+kvPort: 4001
+
+initialCluster:
+  - id: 1
+    exposeKvPortAs: 8001
+    protocol: http
+    domain: 0.0.0.0
+  - id: 2
+    exposeKvPortAs: 8002
+    protocol: http
+    domain: 0.0.0.0
+  - id: 3
+    exposeKvPortAs: 8003
+    protocol: http
+    domain: 0.0.0.0

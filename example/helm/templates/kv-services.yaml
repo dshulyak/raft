@@ -1,0 +1,15 @@
+{{- range $i, $node := .Values.initialCluster }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{- include "kv.fullname" $ }}-{{ $i }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    statefulset.kubernetes.io/pod-name: {{- include "kv.fullname" $ }}-{{ $i }}
+  ports:
+  - protocol: TCP
+    port: {{ $.Values.kvPort }}
+    targetPort: {{ $node.exposeKvPortAs }}
+{{- end }}

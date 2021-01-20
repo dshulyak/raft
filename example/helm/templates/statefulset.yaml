@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{- include "kv.fullname" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{- include "kv.fullname" . }}
+  serviceName: {{- include "kv.fullname" . }}
+  replicas: {{ len .Values.initialCluster }}
+  template:
+    metadata:
+      labels:
+        app: {{- include "kv.fullname" . }}
+    spec:
+      containers:
+      - name: kv
+        image: {{- include "kv.image" . }}
+        ports:
+        - containerPort: {{ .Values.raftPort }}
+          name: raft
+        - containerPort: {{ .Values.kvPort }}
+          name: kv
+        args:
+          --name=$(MY_POD_NAME)
+          -c /etc/raft-kv/cluster.yaml
+          -d /var/raft-kv
+          -v {{ .Values.logLevel }}
+          -l 0.0.0.0:{{ .Values.kvPort }}
+        env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: cluster-config
+          mountPath: /etc/raft-kv/
+        - name: data
+          mountPath: /var/raft-kv/
+  volumes:
+    - name: cluster-config
+      configMap:
+        name: {{- include "kv.fullname" . }}-cluster-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "default"
+      resources:
+        requests:
+          storage: 5Gi
