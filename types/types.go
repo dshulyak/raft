@@ -20,6 +20,7 @@ func NodeIDFromString(id string) (NodeID, error) {
 }
 
 type Node struct {
+	Name    string `json:"name"`
 	ID      NodeID `json:"id"`
 	Address string `json:"address"`
 

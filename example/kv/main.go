@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -20,10 +19,11 @@ import (
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"gopkg.in/yaml.v2"
 )
 
 var (
-	id       = flag.Uint64("id", 0, "unique id of the node")
+	name     = flag.String("name", "", "unique name of this node")
 	dataDir  = flag.StringP("data", "d", "", "directory for the persistent data")
 	conf     = flag.StringP("conf", "c", "", "cluster configuration")
 	logLevel = flag.StringP("log-level", "v", "debug", "log level")
@@ -47,8 +47,8 @@ func main() {
 
 	logger := makeLogger().Sugar()
 
-	if *id == 0 {
-		logger.Fatal("id is required")
+	if len(*name) == 0 {
+		logger.Fatal("name is required")
 	}
 	if len(*conf) == 0 {
 		logger.Fatal("configuration is required")
@@ -69,18 +69,18 @@ func main() {
 	if err != nil {
 		logger.Fatalf("can't open config at %v: %v\n", *conf, err)
 	}
-	if err := json.NewDecoder(f).Decode(&cluster); err != nil {
+	if err := yaml.NewDecoder(f).Decode(&cluster); err != nil {
 		logger.Fatalf("can't decode config at %v into types.Configuration: %v\n", *conf, err)
 	}
 
 	var node *types.Node
 	for i := range cluster.Nodes {
-		if cluster.Nodes[i].ID == types.NodeID(*id) {
+		if cluster.Nodes[i].Name == *name {
 			node = &cluster.Nodes[i]
 		}
 	}
 	if node == nil {
-		logger.Fatalf("node with id %d is absent from configuration\n", *id)
+		logger.Fatalf("node with id %d is absent from configuration\n", *name)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -98,7 +98,7 @@ func main() {
 
 	// transport register handler for the stream. grpc doesn't allow for the handlers
 	// to be registered after server is started.
-	tr := grpcstream.NewTransport(types.NodeID(*id), gsrv)
+	tr := grpcstream.NewTransport(node.ID, gsrv)
 	group.Go(func() error {
 		return gsrv.Serve(glisten)
 	})
@@ -110,7 +110,7 @@ func main() {
 	app := newKv(logger)
 
 	conf := raft.DefaultConfig
-	conf.ID = types.NodeID(*id)
+	conf.ID = node.ID
 	// this is temporary until membership changes are supported
 	conf.Configuration = &cluster
 	conf.App = app
