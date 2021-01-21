@@ -14,6 +14,7 @@ import (
 	"github.com/dshulyak/raft/transport/grpcstream"
 	"github.com/dshulyak/raft/types"
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -143,6 +144,7 @@ func main() {
 		app:  app,
 		raft: rnode,
 	}
+	router.Handle("/metrics", promhttp.Handler())
 	registerServer(&srv, router)
 	hsrv := &http.Server{
 		Addr:         *listen,
