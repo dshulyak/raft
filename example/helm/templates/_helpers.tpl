@@ -2,11 +2,11 @@
 fully qualified app name
 */}}
 {{- define "kv.fullname" -}}
-{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
+{{- printf " %s" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "kv.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{- printf " %s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
@@ -23,5 +23,5 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 full image path
 */}}
 {{- define "kv.image" -}}
-{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- printf " %s:%s" .Values.image.repository .Values.image.tag -}}
 {{- end -}}

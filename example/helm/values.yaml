@@ -6,6 +6,9 @@ image:
 # dataDir will be mounted for each pod.
 dataDir: /raft
 
+storageSize: 5Gi
+storageClass: microk8s-hostpath
+
 logLevel: debug
 
 # id must be unique.
@@ -22,14 +25,14 @@ kvPort: 4001
 
 initialCluster:
   - id: 1
-    exposeKvPortAs: 8001
+    exposeKvPortAs: 30001
     protocol: http
     domain: 0.0.0.0
   - id: 2
-    exposeKvPortAs: 8002
+    exposeKvPortAs: 30002
     protocol: http
     domain: 0.0.0.0
   - id: 3
-    exposeKvPortAs: 8003
+    exposeKvPortAs: 30003
     protocol: http
     domain: 0.0.0.0
