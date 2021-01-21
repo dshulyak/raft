@@ -1,25 +1,26 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{- include "kv.fullname" . }}
+  name: {{ include "kv.fullname" . }}
+  labels: {{- include "kv.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      app: {{- include "kv.fullname" . }}
-  serviceName: {{- include "kv.fullname" . }}
+      app: {{ include "kv.fullname" . }}
+  serviceName: {{ include "kv.fullname" . }}-svc
   replicas: {{ len .Values.initialCluster }}
   template:
     metadata:
       labels:
-        app: {{- include "kv.fullname" . }}
+        app: {{ include "kv.fullname" . }}
     spec:
       volumes:
         - name: cluster-config
           configMap:
-            name: {{- include "kv.fullname" . }}-cluster-config
+            name: {{ include "kv.fullname" . }}-cluster-config
       containers:
       - name: kv
-        image: {{- include "kv.image" . }}
+        image: {{ include "kv.image" . }}
         ports:
         - containerPort: {{ .Values.raftPort }}
           name: raft
@@ -27,10 +28,11 @@ spec:
           name: kv
         args:
           - --name=$(HOSTNAME)
-          - -c /etc/raft-kv/cluster.yaml
-          - -d /var/raft-kv
-          - -v {{ .Values.logLevel }}
-          - -l 0.0.0.0:{{ .Values.kvPort }}
+          - -c=/etc/raft-kv/cluster.yaml
+          - -d=/var/raft-kv
+          - -v={{ .Values.logLevel }}
+          - -l=0.0.0.0:{{ .Values.kvPort }}
+          - -r=0.0.0.0:{{ .Values.raftPort }}
         env:
           - name: HOSTNAME
             valueFrom:

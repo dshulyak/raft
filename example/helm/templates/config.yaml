@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{- include "kv.fullname" . }}-cluster-config
+  name: {{ include "kv.fullname" . }}-cluster-config
   labels: {{- include "kv.labels" . | nindent 4 }}
 data:
   cluster.yaml: |-
-nodes:
-    {{- range $i, $value := .Values.initialCluster }}
-    - id: {{ $value.id }}
-      name: {{- include "kv.fullname" $ }}-{{ $i }}
-      address: {{- include "kv.fullname" $ }}:{{ $.Values.raftPort }}
-      info:
-        - key: ClientURL
-          value: {{ $value.protocol }}://{{ $value.domain }}:{{ $value.exposeKvPortAs }}
-   {{- end }}
+    nodes:
+      {{- range $i, $value := .Values.initialCluster }}
+      - id: {{ $value.id }}
+        name: {{ include "kv.fullname" $ }}-{{ $i }}
+        address: {{ include "kv.fullname" $ }}-{{ $i }}.{{- include "kv.fullname" $ }}-svc:{{ $.Values.raftPort }}
+        info:
+          - key: ClientURL
+            value: {{ $value.protocol }}://{{ $value.domain }}:{{ $value.exposeKvPortAs }}
+      {{- end }}
