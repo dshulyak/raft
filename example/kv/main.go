@@ -23,11 +23,12 @@ import (
 )
 
 var (
-	name     = flag.String("name", "", "unique name of this node")
-	dataDir  = flag.StringP("data", "d", "", "directory for the persistent data")
-	conf     = flag.StringP("conf", "c", "", "cluster configuration")
-	logLevel = flag.StringP("log-level", "v", "debug", "log level")
-	listen   = flag.StringP("listen", "l", "0.0.0.0:8001", "listener address for kv application")
+	name       = flag.String("name", "", "unique name of this node")
+	dataDir    = flag.StringP("data", "d", "", "directory for the persistent data")
+	conf       = flag.StringP("conf", "c", "", "cluster configuration")
+	logLevel   = flag.StringP("log-level", "v", "debug", "log level")
+	listen     = flag.StringP("listen", "l", "0.0.0.0:8001", "listener address for kv application")
+	raftListen = flag.StringP("raft", "r", "0.0.0.0:8000", "listener address for raft")
 )
 
 func makeLogger() *zap.Logger {
@@ -90,7 +91,7 @@ func main() {
 	// SETUP GRPC TRANSPORT
 	//
 
-	glisten, err := net.Listen("tcp", node.Address)
+	glisten, err := net.Listen("tcp", *raftListen)
 	if err != nil {
 		logger.Fatalf("failed to listen on %v: %v\n", node.Address, err)
 	}
