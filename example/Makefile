@@ -5,7 +5,7 @@ VERSION ?= $(shell git rev-parse --short HEAD)
 
 K8S_NAME ?= raft-kv
 
-HELM ?= helm
+DOMAIN ?= 0.0.0.0
 
 .PHONY: build
 build:
@@ -33,9 +33,8 @@ release: image push
 
 .PHONY: install
 install:
-	${HELM} install --name ${K8S_NAME} --set image.tag=${VERSION} ./helm/
-
+	helm install ${K8S_NAME} --set image.tag=${VERSION},domain=${DOMAIN} ./helm/
 
 .PHONY: purge
 purge:
-	${HELM} del --purge ${K8S_NAME}
+	helm uninstall ${K8S_NAME}

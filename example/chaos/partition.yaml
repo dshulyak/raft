@@ -1,0 +1,24 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: full-partition-leader
+  namespace: default
+spec:
+  action: partition
+  mode: one
+  selector:
+    pods:
+      default:
+        - raft-kv-0
+  direction: both
+  target:
+    selector:
+      pods:
+        default:
+          - raft-kv-1
+          - raft-kv-2
+    mode: fixed
+    value: "2"
+  duration: '5m'
+  scheduler:
+    cron: '@every 10m'

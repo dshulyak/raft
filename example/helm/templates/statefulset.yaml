@@ -11,6 +11,9 @@ spec:
   replicas: {{ len .Values.initialCluster }}
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.kvPort }}"
       labels:
         app: {{ include "kv.fullname" . }}
     spec:

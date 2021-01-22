@@ -12,5 +12,5 @@ data:
         address: {{ include "kv.fullname" $ }}-{{ $i }}.{{- include "kv.fullname" $ }}-svc:{{ $.Values.raftPort }}
         info:
           - key: ClientURL
-            value: {{ $value.protocol }}://{{ $value.domain }}:{{ $value.exposeKvPortAs }}
+            value: {{ $value.protocol }}://{{ $.Values.domain }}:{{ $value.exposeKvPortAs }}
       {{- end }}

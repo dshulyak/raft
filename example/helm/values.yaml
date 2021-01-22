@@ -1,5 +1,5 @@
 image:
-  repository: localhost:32000/raft-kv
+  repository: yashulyak/raft-kv
   pullPolicy: IfNotPresent
   tag: latest
 
@@ -7,7 +7,7 @@ image:
 dataDir: /raft
 
 storageSize: 5Gi
-storageClass: microk8s-hostpath
+storageClass: standard
 
 logLevel: debug
 
@@ -23,16 +23,16 @@ raftPort: 4000
 # a distinct selector. this service will expose pods kvPort as exposeKvPortAs
 kvPort: 4001
 
+# externally visible address to expose services for clients
+domain: 0.0.0.0
+
 initialCluster:
   - id: 1
     exposeKvPortAs: 30001
     protocol: http
-    domain: 0.0.0.0
   - id: 2
     exposeKvPortAs: 30002
     protocol: http
-    domain: 0.0.0.0
   - id: 3
     exposeKvPortAs: 30003
     protocol: http
-    domain: 0.0.0.0
