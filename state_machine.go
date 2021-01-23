@@ -560,10 +560,19 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 		if m.Term > c.Term {
 			return toFollower(c.state, m.Term, u)
 		}
+		var grant bool
+		if m.Term == c.Term && m.PreVote {
+			grant = c.cmpLogs(m.LastLog.Term, m.LastLog.Index) <= 0
+			// no need to reset election timeout if pre-vote is granted in this case
+			// if candidate times out in pre-vote mode it will restart pre-vote mode
+			// with the same term.
+			// so timeout will not prevent other candidate from succeeding
+		}
 		c.send(u, &RequestVoteResponse{
-			Voter:   c.id,
-			Term:    c.Term,
-			PreVote: m.PreVote,
+			Voter:       c.id,
+			Term:        c.Term,
+			PreVote:     m.PreVote,
+			VoteGranted: grant,
 		}, m.Candidate)
 	case *AppendEntries:
 		// leader might have been elected in the same term as the candidate

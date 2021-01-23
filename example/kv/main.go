@@ -118,7 +118,6 @@ func main() {
 	conf.App = app
 	conf.Logger = logger.Desugar()
 	conf.Transport = tr
-	conf.TickInterval = time.Second
 
 	if err := raft.BuildConfig(&conf,
 		raft.WithStorageAt(*dataDir),
