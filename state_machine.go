@@ -277,7 +277,7 @@ type follower struct {
 
 	// linkTimeout is equal to the min election timeout.
 	// if RequestVote is received before min election timeout has passed it will be rejected.
-	// prevents partially connected replice with a recent log from livelocking a cluster
+	// prevents partially connected replica with an upto date log from livelocking a cluster
 	//
 	// described in 6. Cluster membership changes
 	//
@@ -757,7 +757,7 @@ func (l *leader) tick(n int, u *Update) role {
 		expect := l.majority() - 1
 		if n := len(l.checkQuorum); n < expect {
 			l.logger.Debugw("CheckQuorum failed", "received", n, "expected", expect)
-			return l.stepdown(0, u)
+			return l.stepdown(l.Term, u)
 		}
 		for id := range l.checkQuorum {
 			delete(l.checkQuorum, id)
