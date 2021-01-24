@@ -95,9 +95,9 @@ var DefaultConfig = Config{
 	PendingProposalsBuffer: 2048,
 	DialTimeout:            200 * time.Millisecond,
 	Backoff:                200 * time.Millisecond,
-	TickInterval:           100 * time.Millisecond,
-	HeartbeatTimeout:       1,
-	ElectionTimeoutMin:     4,
+	TickInterval:           20 * time.Millisecond,
+	HeartbeatTimeout:       2,
+	ElectionTimeoutMin:     5,
 	ElectionTimeoutMax:     10,
 	Logger:                 zap.NewNop(),
 }
