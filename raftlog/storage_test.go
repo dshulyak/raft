@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -26,8 +27,10 @@ func TestStorageDeleteAppend(t *testing.T) {
 		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
 	}
 	require.NoError(t, store.Sync())
+
 	last, err := store.Last()
 	require.NoError(t, err)
+
 	require.NoError(t, store.DeleteFrom(entries-1))
 	for i := entries; i < entries*2; i++ {
 		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
@@ -63,7 +66,7 @@ func TestStorageLogDeletion(t *testing.T) {
 type storageMachine struct {
 	storage     *Storage
 	term, index uint64
-	logs        []Entry
+	logs        []*Entry
 }
 
 func (s *storageMachine) Init(t *rapid.T) {
@@ -98,8 +101,8 @@ func (s *storageMachine) Append(t *rapid.T) {
 	if rapid.Bool().Draw(t, "term").(bool) {
 		s.term++
 	}
-	entry := Entry{Index: s.index, Term: s.term, Op: buf}
-	require.NoError(t, s.storage.Append(&entry))
+	entry := &types.Entry{Index: s.index, Term: s.term, Op: buf}
+	require.NoError(t, s.storage.Append(entry))
 	s.logs = append(s.logs, entry)
 	s.index++
 	require.NoError(t, s.storage.Sync())
