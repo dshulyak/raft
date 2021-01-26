@@ -31,7 +31,7 @@ func TestStorageDeleteAppend(t *testing.T) {
 	last, err := store.Last()
 	require.NoError(t, err)
 
-	require.NoError(t, store.DeleteFrom(entries-1))
+	require.NoError(t, store.DeleteFrom(uint64(entries)))
 	for i := entries; i < entries*2; i++ {
 		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
 	}
@@ -46,15 +46,15 @@ func TestStorageLogDeletion(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Delete()) })
 	entries := 1000
-	for i := 0; i < entries; i++ {
+	for i := 1; i <= entries; i++ {
 		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
 	}
 	require.NoError(t, store.Sync())
 	from := 100
-	require.NoError(t, store.DeleteFrom(from))
+	require.NoError(t, store.DeleteFrom(uint64(from)+1))
 
-	for i := 0; i < from; i++ {
-		entry, err := store.Get(i)
+	for i := 1; i <= from; i++ {
+		entry, err := store.Get(uint64(i))
 		require.NoError(t, err)
 		require.Equal(t, i, int(entry.Index))
 	}

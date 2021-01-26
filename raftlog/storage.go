@@ -20,6 +20,12 @@ const (
 	defaultMaxDirtyEntries = 4096
 )
 
+func notZero(i uint64) {
+	if i == 0 {
+		panic("zero refers to an empty log")
+	}
+}
+
 type Option func(*Storage) error
 
 func WithCache(size int) Option {
@@ -61,6 +67,31 @@ func New(logger *zap.Logger, iopts *IndexOptions, lopts *LogOptions, opts ...Opt
 	if st.cache == nil {
 		st.cache = newCache(defaultCacheEntries)
 	}
+
+	var entry types.Entry
+	if last != nil {
+		if err := st.log.Get(last, &entry); err != nil {
+			return nil, err
+		}
+	}
+	st.flushed = entry.Index
+	st.dirty = st.flushed
+
+	if st.flushed > 0 {
+		var start uint64
+		d := st.flushed - st.cache.Capacity()
+		if d >= 0 {
+			start = d
+		}
+		entries := make([]*types.Entry, d)
+		for i := range entries {
+			entries[i], err = st.getFlushed(start + uint64(i) - 1)
+			if err != nil {
+				return nil, err
+			}
+		}
+		st.cache.Warmup(entries)
+	}
 	return st, nil
 }
 
@@ -69,27 +100,38 @@ type Storage struct {
 
 	mu sync.RWMutex
 
-	dirtyLimit     uint64
-	flushed, dirty uint64
-	cache          *entriesCache
+	dirtyLimit uint64
+	// last flushed index. starts at 1
+	flushed uint64
+	// last appended index. starts at 1. never lower than flushed.
+	dirty uint64
+	cache *entriesCache
 
 	index *Index
 	log   *Log
 }
 
-func (s *Storage) Get(i int) (entry *types.Entry, err error) {
+func (s *Storage) Get(i uint64) (*types.Entry, error) {
+	notZero(i)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entry = s.cache.Get(uint64(i))
+	if i > s.dirty {
+		return nil, ErrEntryNotFound
+	}
+
+	entry := s.cache.Get(i - 1)
 	if entry != nil {
 		return entry, nil
 	}
 
 	// TODO there must be an API to load many entries with one system call
 	// probably with a range query
+	return s.getFlushed(i - 1)
+}
 
-	idx := s.index.Get(uint64(i))
+func (s *Storage) getFlushed(i uint64) (entry *types.Entry, err error) {
+	idx := s.index.Get(i)
 	if idx.Length == 0 && idx.Offset == 0 {
 		err = ErrEntryNotFound
 		return
@@ -108,6 +150,7 @@ func (s *Storage) IsEmpty() bool {
 func (s *Storage) Last() (entry *types.Entry, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	if s.dirty == 0 {
 		err = ErrEmptyLog
 		return
@@ -118,6 +161,7 @@ func (s *Storage) Last() (entry *types.Entry, err error) {
 func (s *Storage) Append(entry *Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.dirty++
 	s.cache.Append(entry)
 	if s.dirty-s.flushed == s.dirtyLimit {
@@ -159,23 +203,31 @@ func (s *Storage) sync() (err error) {
 	return nil
 }
 
-func (s *Storage) DeleteFrom(start int) error {
+func (s *Storage) DeleteFrom(start uint64) error {
+	notZero(start)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache.DeleteFrom(uint64(start))
-	offset := s.index.Truncate(uint64(start))
+
+	s.cache.DeleteFrom(start - 1)
+
+	offset := s.index.Truncate(start - 1)
 	if err := s.log.Truncate(offset); err != nil {
 		return err
 	}
-	s.flushed = uint64(start)
+
+	s.flushed = uint64(start - 1)
 	s.dirty = s.flushed
+
 	return nil
 }
 
 func (s *Storage) Close() error {
 	s.logger.Debug("closing storage")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	// use multierr package
 	err1 := s.index.Close()
 	err2 := s.log.Close()
@@ -187,8 +239,10 @@ func (s *Storage) Close() error {
 
 func (s *Storage) Delete() error {
 	s.logger.Debug("deleting storage")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	err1 := s.index.Delete()
 	err2 := s.log.Delete()
 	if err1 != nil {

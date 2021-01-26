@@ -96,18 +96,18 @@ func (p *replicationState) next() *AppendEntries {
 		d         = min(p.lastLog.Index-p.sentLog.Index, p.maxEntries)
 		entries   = make([]*types.Entry, d)
 		prevLog   = p.sentLog
-		nextIndex = int(p.sentLog.Index) + 1
+		nextIndex = p.sentLog.Index + 1
 	)
 
 	p.logger.Debugw("replicate next batch of entries", "next", nextIndex,
 		"count", d,
 		"last log", p.lastLog)
 	for i := 0; i < int(d); i++ {
-		entry, err := p.log.Get(nextIndex - 1)
+		entry, err := p.log.Get(nextIndex)
 		if err != nil {
 			p.logger.Panicw("failed to get entry", "index", nextIndex, "error", err)
 		}
-		entries[i] = &entry
+		entries[i] = entry
 		if entry.Index != uint64(nextIndex) {
 			p.logger.Errorw("unexepected index for returned entry", "expected", nextIndex, "got", entry)
 			panic("index is corrupted")
@@ -151,9 +151,7 @@ func (p *replicationState) onResponse(m *AppendEntriesResponse) {
 	if p.prevLog.Index == 0 {
 		p.prevLog.Term = 0
 	} else {
-		// TODO add term to index structures and provide a method
-		// to read LogHeader (Index and Term)
-		entry, err := p.log.Get(int(p.prevLog.Index) - 1)
+		entry, err := p.log.Get(p.prevLog.Index)
 		if err != nil {
 			p.logger.Panicw("failed to get log", "index", p.prevLog.Index, "error", err)
 		}
@@ -165,15 +163,18 @@ func (p *replicationState) onResponse(m *AppendEntriesResponse) {
 func (p *replicationState) init(m *AppendEntries) {
 	p.id = m.Leader
 	p.term = m.Term
+
 	p.prevLog = m.PrevLog
 	p.sentLog = m.PrevLog
 	p.lastLog = m.PrevLog
+
 	if len(m.Entries) > 0 {
 		last := len(m.Entries) - 1
 		p.lastLog.Index = m.Entries[last].Index
 		p.lastLog.Term = m.Entries[last].Term
 		p.sentLog = p.lastLog
 	}
+
 	p.commitLogIndex = m.Commited
 	p.readIndex = m.ReadIndex
 }
@@ -186,6 +187,8 @@ func (p *replicationState) update(m1, m2 *AppendEntries) *AppendEntries {
 	if m2.Term != p.term {
 		return nil
 	}
+
+	p.logger.Debugw("update internal state", "current", m1, "updated", m2)
 	p.commitLogIndex = m2.Commited
 	p.readIndex = m2.ReadIndex
 	if len(m2.Entries) > 0 {

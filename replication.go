@@ -87,9 +87,17 @@ func (r *replicationChannel) Run() (err error) {
 		case msg := <-r.in:
 			switch m := msg.(type) {
 			case *types.AppendEntriesResponse:
+				// on response update internal state and,
+				// schedule next message without overwriting current
+				//
+				// overwriting is prohibited so that we don't overwrite
+				// already fetched messages
 				r.peer.onResponse(m)
-				next = r.peer.next()
+				if next == nil {
+					next = r.peer.next()
+				}
 			case *types.AppendEntries:
+				// TODO check if it is possible to merge init and update
 				if !initialized {
 					r.peer.init(m)
 					next = m

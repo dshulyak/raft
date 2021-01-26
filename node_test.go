@@ -97,7 +97,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		nc.nodes[c.ID] = n
 		t.Cleanup(func() {
 			n.Close()
-			n.Wait()
+			require.NoError(nc.t, n.Wait(), "node %d exited with error", c.ID)
 		})
 	}
 	return nc

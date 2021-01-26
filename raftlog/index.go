@@ -179,7 +179,7 @@ func (i *Index) LastIndex() IndexEntry {
 	return i.get(i.nextLogIndex - 1)
 }
 
-func (i *Index) Append(entrySize uint64) error {
+func (i *Index) Append(size uint64) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.nextLogIndex == i.maxLogIndex {
@@ -188,11 +188,11 @@ func (i *Index) Append(entrySize uint64) error {
 		}
 	}
 	pos := i.mmap[i.position(i.nextLogIndex):]
-	if err := (&IndexEntry{Offset: i.nextOffset, Length: entrySize}).Encode(pos[:entryWidth]); err != nil {
+	if err := (&IndexEntry{Offset: i.nextOffset, Length: size}).Encode(pos[:entryWidth]); err != nil {
 		return err
 	}
 	i.nextLogIndex++
-	i.nextOffset += entrySize
+	i.nextOffset += size
 	return nil
 }
 

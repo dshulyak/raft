@@ -355,11 +355,13 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 		}, msg.Leader)
 		return nil
 	}
+
 	if !empty && msg.PrevLog.Index == 0 {
 		f.logger.Debugw("cleaning local log")
-		f.must(f.log.DeleteFrom(0), "failed to delete a log")
+		// 1 is a first valid index for a non empty log
+		f.must(f.log.DeleteFrom(1), "failed to delete a log")
 	} else if !empty {
-		entry, err := f.log.Get(int(msg.PrevLog.Index) - 1)
+		entry, err := f.log.Get(msg.PrevLog.Index)
 		if errors.Is(err, raftlog.ErrEntryNotFound) {
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
@@ -375,7 +377,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 				"local prev term", entry.Term,
 				"new term", msg.PrevLog.Term,
 			)
-			f.must(f.log.DeleteFrom(int(msg.PrevLog.Index)-1), "failed to delete a log")
+			f.must(f.log.DeleteFrom(msg.PrevLog.Index), "failed to delete a log")
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
 				Follower: f.id,
@@ -392,7 +394,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	if len(msg.Entries) == 0 {
 		entry, err := f.log.Last()
 		f.must(err, "error loading last log entry")
-		last = &entry
+		last = entry
 	} else {
 		f.logger.Debugw("last appended entry",
 			"index", last.Index,
@@ -523,14 +525,17 @@ func (c *candidate) campaign(preVote bool, u *Update) {
 		c.must(err, "failed to fetch last log entry")
 	}
 
+	var header types.LogHeader
+	if last != nil {
+		header.Term = last.Term
+		header.Index = last.Index
+	}
+
 	request := &RequestVote{
 		Term:      c.Term,
 		Candidate: c.id,
 		PreVote:   c.preVote,
-		LastLog: types.LogHeader{
-			Term:  last.Term,
-			Index: last.Index,
-		},
+		LastLog:   header,
 	}
 
 	c.logger.Debugw("starting an election campaign", "candidate", c.id, "term", c.Term, "pre-vote mode", c.preVote)
@@ -905,7 +910,7 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 	l.logger.Debugw("ready to update commit idx", "index", idx, "set", l.matchIndex.index)
 	// FIXME we are storing index starting at 0. but in the state machine
 	// first valid index starts with 1.
-	entry, err := l.log.Get(int(idx) - 1)
+	entry, err := l.log.Get(idx)
 	l.must(err, "failed to get entry")
 	if entry.Term != l.Term {
 		return nil

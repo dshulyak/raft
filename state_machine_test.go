@@ -540,7 +540,9 @@ func TestRaftLogClean(t *testing.T) {
 
 	for i := 1; i <= cluster.size; i++ {
 		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2})
-		require.True(t, cluster.logs[NodeID(i)].IsEmpty())
+		require.True(t, cluster.logs[NodeID(i)].IsEmpty(),
+			"log for node %d should be cleared", i,
+		)
 	}
 }
 
@@ -807,7 +809,7 @@ func (c *clusterMachine) Check(t *rapid.T) {
 	majority := c.cluster.size/2 + 1
 	n := 0
 	c.cluster.iterateLogs(func(log *raftlog.Storage) bool {
-		_, err := log.Get(int(c.state.commit))
+		_, err := log.Get(c.state.commit)
 		if err != nil {
 			require.EqualError(t, err, raftlog.ErrEntryNotFound.Error())
 		}

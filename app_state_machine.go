@@ -99,12 +99,12 @@ func (a *appStateMachine) onUpdate(u *appUpdate) error {
 			proposal = u.Proposals[next-recent]
 			entry = proposal.Entry
 		} else {
-			ent, err := a.log.Get(int(next) - 1)
+			ent, err := a.log.Get(next)
 			if err != nil {
 				a.logger.Errorw("app failed to get a log entry", "index", next, "error", err)
 				return err
 			}
-			entry = &ent
+			entry = ent
 		}
 		if entry.Type == types.Entry_APP {
 			a.logger.Debugw("applying entry", "index", entry.Index, "term", entry.Term, "proposed", proposal != nil)

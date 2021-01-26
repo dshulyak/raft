@@ -18,7 +18,7 @@ type entriesCache struct {
 	ring       []*types.Entry
 }
 
-func (e *entriesCache) Warmup(entries ...*types.Entry) {
+func (e *entriesCache) Warmup(entries []*types.Entry) {
 	if len(entries) == 0 {
 		return
 	}
