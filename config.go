@@ -43,11 +43,10 @@ func BuildConfig(conf *Config, opts ...ConfigOption) error {
 // WithStorageAt when passed to the BuildConfig.
 func WithStorageAt(dirPath string) ConfigOption {
 	return func(conf *Config) error {
-		storage, err := raftlog.New(conf.Logger, &raftlog.IndexOptions{
-			File: filepath.Join(dirPath, "index.raft"),
-		}, &raftlog.LogOptions{
-			File: filepath.Join(dirPath, "wal.raft"),
-		})
+		storage, err := raftlog.New(
+			raftlog.WithDir(dirPath),
+			raftlog.WithLogger(conf.Logger),
+		)
 		if err != nil {
 			return err
 		}

@@ -96,7 +96,7 @@ func (a *keyValueApp) Apply(entry *raftlog.Entry) interface{} {
 
 func TestApplyLogs(t *testing.T) {
 	logger := testLogger(t)
-	storage, err := raftlog.New(logger, nil, nil)
+	storage, err := raftlog.New(raftlog.WithLogger(logger), raftlog.WithTempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		storage.Delete()

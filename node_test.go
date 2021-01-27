@@ -79,7 +79,7 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		nc.apps[c.ID] = app
 		c.App = app
 		c.Logger = logger.Named(fmt.Sprintf("node=%d", i))
-		c.Storage, err = raftlog.New(c.Logger, nil, nil)
+		c.Storage, err = raftlog.New(raftlog.WithLogger(logger), raftlog.WithTempDir())
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			c.Storage.Delete()

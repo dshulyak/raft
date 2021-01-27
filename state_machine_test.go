@@ -88,7 +88,7 @@ func getTestCluster(t TestingHelper, opts ...testClusterOp) *testCluster {
 			ds.Close()
 		})
 
-		log, err := raftlog.New(logger, nil, nil)
+		log, err := raftlog.New(raftlog.WithLogger(logger), raftlog.WithTempDir())
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, log.Delete())
