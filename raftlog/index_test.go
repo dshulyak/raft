@@ -3,7 +3,6 @@ package raftlog
 import (
 	"flag"
 	"io/ioutil"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,58 +25,52 @@ func testLogger(t TestingI) *zap.Logger {
 	return log
 }
 
+func makeTestIndex(t testing.TB, defaultSize ...int) *index {
+	t.Helper()
+	require.True(t, len(defaultSize) <= 1, "should not be larger then one")
+
+	size := defaultIndexSize
+	if len(defaultSize) == 1 {
+		size = defaultSize[0]
+	}
+
+	f, err := ioutil.TempFile("", "index-test-file-")
+	require.NoError(t, err)
+
+	idx, err := openIndex(testLogger(t).Sugar(), f.Name(), size)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		idx.Delete()
+	})
+	return idx
+}
+
 func TestIndexGetAppend(t *testing.T) {
 	items := 1200
 	initial := items/2 - items/4
-	index, err := NewIndex(testLogger(t), &IndexOptions{DefaultSize: initial * int(entryWidth)})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		index.Delete()
-	})
+	idx := makeTestIndex(t, initial*int(entryWidth))
+
 	for i := 0; i < 1000; i++ {
-		require.NoError(t, index.Append(uint64(1)))
+		require.NoError(t, idx.Append(uint64(1)))
 	}
 	for i := 0; i < 1000; i++ {
-		require.Equal(t, i, int(index.Get(uint64(i)).Offset))
+		require.Equal(t, i, int(idx.Get(uint64(i)).Offset))
 	}
 }
 
 func TestIndexReopen(t *testing.T) {
-	f, err := ioutil.TempFile("", "test-index-")
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
+	idx := makeTestIndex(t)
 
-	t.Cleanup(func() {
-		require.NoError(t, os.Remove(f.Name()))
-	})
-
-	index, err := NewIndex(testLogger(t), &IndexOptions{File: f.Name()})
-	require.NoError(t, err)
 	n := 100
 	size := 1
 	for i := 0; i < n; i++ {
-		require.NoError(t, index.Append(uint64(size)))
+		require.NoError(t, idx.Append(uint64(size)))
 	}
 
-	require.NoError(t, index.Close())
+	require.NoError(t, idx.Close())
 
-	index, err = NewIndex(testLogger(t), &IndexOptions{File: f.Name()})
+	idx, err := openIndex(testLogger(t).Sugar(), idx.f.Name(), defaultIndexSize)
 	require.NoError(t, err)
 
-	ie := index.LastIndex()
-	require.Equal(t, (n-1)*size, int(ie.Offset))
-}
-
-func BenchmarkIndexTruncate(b *testing.B) {
-	index, err := NewIndex(testLogger(b), &IndexOptions{DefaultSize: 0xffff})
-	require.NoError(b, err)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-
-		require.NoError(b, index.Append(100))
-		require.NoError(b, index.Sync())
-
-		_ = index.Truncate(0)
-	}
+	require.Equal(t, (n-1)*size, int(idx.LastIndex().Offset))
 }

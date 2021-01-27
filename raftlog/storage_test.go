@@ -9,18 +9,24 @@ import (
 	"pgregory.net/rapid"
 )
 
-func TestStorageLastEmpty(t *testing.T) {
-	store, err := New(testLogger(t), nil, nil)
+func makeTestStorage(t testing.TB) *Storage {
+	t.Helper()
+
+	store, err := New(WithLogger(testLogger(t)), WithTempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Delete()) })
-	_, err = store.Last()
+	return store
+}
+
+func TestStorageLastEmpty(t *testing.T) {
+	store := makeTestStorage(t)
+
+	_, err := store.Last()
 	require.True(t, errors.Is(err, ErrEmptyLog), "expected empty log error")
 }
 
 func TestStorageDeleteAppend(t *testing.T) {
-	store, err := New(testLogger(t), nil, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.Delete()) })
+	store := makeTestStorage(t)
 
 	entries := 2
 	for i := 0; i < entries; i++ {
@@ -42,9 +48,8 @@ func TestStorageDeleteAppend(t *testing.T) {
 }
 
 func TestStorageLogDeletion(t *testing.T) {
-	store, err := New(testLogger(t), nil, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.Delete()) })
+	store := makeTestStorage(t)
+
 	entries := 1000
 	for i := 1; i <= entries; i++ {
 		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
@@ -59,7 +64,7 @@ func TestStorageLogDeletion(t *testing.T) {
 		require.Equal(t, i, int(entry.Index))
 	}
 
-	require.NoError(t, store.DeleteFrom(0))
+	require.NoError(t, store.DeleteFrom(1))
 	require.True(t, store.IsEmpty())
 }
 
@@ -70,7 +75,7 @@ type storageMachine struct {
 }
 
 func (s *storageMachine) Init(t *rapid.T) {
-	storage, err := New(testLogger(t), nil, nil)
+	storage, err := New(WithLogger(testLogger(t)), WithTempDir())
 	require.NoError(t, err)
 	s.storage = storage
 }
@@ -89,10 +94,10 @@ func (s *storageMachine) Get(t *rapid.T) {
 	if s.storage.IsEmpty() {
 		t.Skip("empty storage")
 	}
-	i := rapid.IntRange(0, len(s.logs)-1).Draw(t, "i").(int)
+	i := rapid.Uint64Range(1, uint64(len(s.logs))).Draw(t, "i").(uint64)
 	entry, err := s.storage.Get(i)
 	require.NoError(t, err)
-	require.Equal(t, s.logs[i], entry)
+	require.Equal(t, s.logs[i-1], entry)
 }
 
 func (s *storageMachine) Append(t *rapid.T) {
@@ -101,10 +106,10 @@ func (s *storageMachine) Append(t *rapid.T) {
 	if rapid.Bool().Draw(t, "term").(bool) {
 		s.term++
 	}
+	s.index++
 	entry := &types.Entry{Index: s.index, Term: s.term, Op: buf}
 	require.NoError(t, s.storage.Append(entry))
 	s.logs = append(s.logs, entry)
-	s.index++
 	require.NoError(t, s.storage.Sync())
 }
 
@@ -114,8 +119,7 @@ func (s *storageMachine) Sync(t *rapid.T) {
 
 func (s *storageMachine) Check(t *rapid.T) {
 	for i := range s.logs {
-
-		entry, err := s.storage.Get(int(s.logs[i].Index))
+		entry, err := s.storage.Get(s.logs[i].Index)
 		require.NoError(t, err)
 		require.Equal(t, s.logs[i], entry)
 	}

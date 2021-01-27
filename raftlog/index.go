@@ -3,17 +3,15 @@ package raftlog
 import (
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sort"
-	"sync"
 
 	"github.com/tysonmote/gommap"
 	"go.uber.org/zap"
 )
 
 const (
-	initialIndexSize = 1 << 20
+	defaultIndexSize = 10 << 20 // 10mb
 )
 
 const (
@@ -22,76 +20,57 @@ const (
 	entryWidth         = offsetWidth + lengthWidth
 )
 
-type IndexEntry struct {
+type indexEntry struct {
 	Offset uint64
 	Length uint64
 }
 
-func (i *IndexEntry) Encode(to []byte) error {
+func (i *indexEntry) Encode(to []byte) error {
 	binary.BigEndian.PutUint64(to, i.Offset)
 	binary.BigEndian.PutUint64(to[offsetWidth:], i.Length)
 	return nil
 }
 
-func (i *IndexEntry) Decode(from []byte) error {
+func (i *indexEntry) Decode(from []byte) error {
 	i.Offset = binary.BigEndian.Uint64(from)
 	i.Length = binary.BigEndian.Uint64(from[offsetWidth:])
 	return nil
 }
 
-func (i *IndexEntry) Size() uint64 {
+func (i *indexEntry) Size() uint64 {
 	return entryWidth
 }
 
-func (i IndexEntry) String() string {
+func (i indexEntry) String() string {
 	return fmt.Sprintf("offset=%d length=%d", i.Offset, i.Length)
 }
 
-type IndexOptions struct {
-	File        string
-	DefaultSize int
-}
-
-func NewIndex(log *zap.Logger, opts *IndexOptions) (*Index, error) {
-	var (
-		f      *os.File
-		size   int
-		err    error
-		logger = log.Sugar()
-	)
-	if opts == nil || len(opts.File) == 0 {
-		f, err = ioutil.TempFile("", "log-index-file-XXX")
-	} else {
-		f, err = os.OpenFile(opts.File, os.O_CREATE|os.O_RDWR, 0o644)
-	}
+func openIndex(logger *zap.SugaredLogger, name string, defaultIndexSize int) (*index, error) {
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	logger.Debugw("opened index file", "path", f.Name())
+
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	size = int(stat.Size())
+	size := int(stat.Size())
 	if stat.Size() == 0 {
-		if opts == nil || opts.DefaultSize == 0 {
-			size = initialIndexSize
-		} else {
-			size = opts.DefaultSize
-		}
+		size = defaultIndexSize
 	}
-	index := &Index{logger: logger, f: f}
-	if err := index.setup(size); err != nil {
+
+	idx := &index{logger: logger, f: f}
+	if err := idx.setup(size); err != nil {
 		return nil, err
 	}
-	return index, nil
+	return idx, nil
 }
 
-// Index is a mapping from log index to a log offset in the file.
-type Index struct {
+// index is a mapping from log index to a log offset in the file.
+type index struct {
 	logger *zap.SugaredLogger
 
-	mu         sync.RWMutex
 	nextOffset uint64
 	// configured at the time of setup. might not be 0 if snapshot exists
 	firstLogIndex uint64
@@ -105,10 +84,11 @@ type Index struct {
 	f *os.File
 }
 
-func (i *Index) setup(size int) error {
+func (i *index) setup(size int) error {
 	if err := i.f.Truncate(int64(size)); err != nil {
 		return fmt.Errorf("can't truncate file %s: %w", i.f.Name(), err)
 	}
+
 	mmap, err := gommap.Map(i.f.Fd(),
 		gommap.PROT_READ|gommap.PROT_WRITE,
 		gommap.MAP_SHARED|gommap.MAP_POPULATE)
@@ -119,6 +99,7 @@ func (i *Index) setup(size int) error {
 		return fmt.Errorf("syscall MADVISE failed: %w", err)
 	}
 	i.mmap = mmap
+
 	if size != 0 {
 		i.maxLogIndex = uint64(size) / entryWidth
 	}
@@ -134,7 +115,7 @@ func (i *Index) setup(size int) error {
 	return nil
 }
 
-func (i *Index) grow() error {
+func (i *index) grow() error {
 	size := len(i.mmap) * 2
 	if err := i.mmap.UnsafeUnmap(); err != nil {
 		return fmt.Errorf("failed to unmap: %w", err)
@@ -145,17 +126,15 @@ func (i *Index) grow() error {
 	return nil
 }
 
-func (i *Index) position(li uint64) uint64 {
+func (i *index) position(li uint64) uint64 {
 	return (li - i.firstLogIndex) * entryWidth
 }
 
-func (i *Index) Get(li uint64) IndexEntry {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
+func (i *index) Get(li uint64) indexEntry {
 	return i.get(li)
 }
 
-func (i *Index) get(li uint64) (entry IndexEntry) {
+func (i *index) get(li uint64) (entry indexEntry) {
 	if li < i.firstLogIndex {
 		return
 	}
@@ -164,31 +143,25 @@ func (i *Index) get(li uint64) (entry IndexEntry) {
 	return
 }
 
-func (i *Index) IsEmpty() bool {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
+func (i *index) IsEmpty() bool {
 	return i.nextLogIndex == 0
 }
 
-func (i *Index) LastIndex() IndexEntry {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
+func (i *index) LastIndex() indexEntry {
 	if i.nextLogIndex == 0 {
-		return IndexEntry{}
+		return indexEntry{}
 	}
 	return i.get(i.nextLogIndex - 1)
 }
 
-func (i *Index) Append(size uint64) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+func (i *index) Append(size uint64) error {
 	if i.nextLogIndex == i.maxLogIndex {
 		if err := i.grow(); err != nil {
 			return err
 		}
 	}
 	pos := i.mmap[i.position(i.nextLogIndex):]
-	if err := (&IndexEntry{Offset: i.nextOffset, Length: size}).Encode(pos[:entryWidth]); err != nil {
+	if err := (&indexEntry{Offset: i.nextOffset, Length: size}).Encode(pos[:entryWidth]); err != nil {
 		return err
 	}
 	i.nextLogIndex++
@@ -196,12 +169,9 @@ func (i *Index) Append(size uint64) error {
 	return nil
 }
 
-func (i *Index) Truncate(start uint64) uint64 {
+func (i *index) Truncate(start uint64) uint64 {
 	idx := i.Get(start)
 	nextOffset := idx.Offset
-
-	i.mu.Lock()
-	defer i.mu.Unlock()
 
 	offset := i.position(start)
 	end := i.position(i.nextLogIndex)
@@ -213,10 +183,8 @@ func (i *Index) Truncate(start uint64) uint64 {
 	return i.nextOffset
 }
 
-func (i *Index) Close() error {
+func (i *index) Close() error {
 	i.logger.Debugw("closing index file")
-	i.mu.Lock()
-	defer i.mu.Unlock()
 	if err := i.mmap.Sync(gommap.MS_SYNC); err != nil {
 		return fmt.Errorf("syscall MSYNC failed: %w", err)
 	}
@@ -230,16 +198,14 @@ func (i *Index) Close() error {
 	return nil
 }
 
-func (i *Index) Delete() error {
+func (i *index) Delete() error {
 	if err := i.Close(); err != nil {
 		return err
 	}
 	return os.Remove(i.f.Name())
 }
 
-func (i *Index) Sync() error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
+func (i *index) Sync() error {
 	if err := i.mmap.Sync(gommap.MS_SYNC); err != nil {
 		return fmt.Errorf("syscall MSYNC failed: %w", err)
 	}

@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
-	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
@@ -16,9 +14,7 @@ import (
 )
 
 const (
-	opTypeSize      = 1
-	writeBufferSize = 4096 * 16
-	scanBufferSize  = writeBufferSize
+	opTypeSize = 1
 )
 
 var (
@@ -29,44 +25,16 @@ var (
 
 type Entry = types.Entry
 
-type LogOptions struct {
-	File       string
-	BufferSize int64
+func onDiskSize(entry *types.Entry) int {
+	return entry.Size() + int(crcSize)
 }
 
-func NewLog(zlog *zap.Logger, last *IndexEntry, opts *LogOptions) (*Log, error) {
-	var (
-		file   string
-		logger = zlog.Sugar()
-	)
-	if opts == nil || len(opts.File) == 0 {
-		f, err := ioutil.TempFile("", "log-file-XXX")
-		if err != nil {
-			return nil, err
-		}
-		if err := f.Close(); err != nil {
-			return nil, err
-		}
-		file = f.Name()
-	} else {
-		file = opts.File
-	}
-	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
-	if err != nil {
+func openLog(logger *zap.SugaredLogger, file string) (*log, error) {
+	l := &log{logger: logger}
+	if err := l.openAt(file); err != nil {
 		return nil, err
 	}
-	if err := unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_SEQUENTIAL); err != nil {
-		return nil, err
-	}
-	log := &Log{
-		logger: logger,
-		f:      f,
-	}
-	if err := log.init(last, opts); err != nil {
-		return nil, err
-	}
-
-	return log, nil
+	return l, nil
 }
 
 type fileBackend interface {
@@ -74,51 +42,27 @@ type fileBackend interface {
 	Flush() error
 }
 
-type Log struct {
+type log struct {
 	logger *zap.SugaredLogger
 
-	mu sync.RWMutex
-	f  *os.File
-	w  fileBackend
+	f *os.File
+	w fileBackend
 }
 
-func (l *Log) init(lastIndex *IndexEntry, opts *LogOptions) error {
-	if opts == nil || opts.BufferSize == 0 {
-		l.w = bufio.NewWriter(l.f)
-	} else {
-		l.w = bufio.NewWriterSize(l.f, int(opts.BufferSize))
-	}
-	stat, err := l.f.Stat()
+func (l *log) openAt(file string) error {
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
-	offset := uint64(stat.Size())
-	if lastIndex != nil {
-		var entry Entry
-		if err := l.Get(lastIndex, &entry); err != nil {
-			return err
-		}
-		validSize := lastIndex.Offset + uint64(entry.Size()) + crcSize
-		if uint64(stat.Size()) == validSize {
-			return nil
-		}
-
-		l.logger.Infow("log file will be truncated",
-			"path", l.f.Name(),
-			"current size", stat.Size(),
-			"valid size", validSize,
-		)
-		offset = lastIndex.Offset + uint64(entry.Size())
-		if err := l.Truncate(offset); err != nil {
-			return err
-		}
+	if err := unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_SEQUENTIAL); err != nil {
+		return err
 	}
+	l.f = f
+	l.w = bufio.NewWriter(f)
 	return nil
 }
 
-func (l *Log) Truncate(offset uint64) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (l *log) Truncate(offset uint64) error {
 	if err := l.w.Flush(); err != nil {
 		return err
 	}
@@ -129,15 +73,14 @@ func (l *Log) Truncate(offset uint64) error {
 	return nil
 }
 
-func (l *Log) Append(entry *Entry) (uint64, error) {
-	size := uint64(entry.Size()) + crcSize
+func (l *log) Append(entry *Entry) (uint64, error) {
+	size := uint64(onDiskSize(entry))
 	buf := make([]byte, size)
 	if _, err := entry.MarshalTo(buf[crcSize:]); err != nil {
 		return 0, err
 	}
 	_ = putCrc32(buf, buf[crcSize:])
-	l.mu.Lock()
-	defer l.mu.Unlock()
+
 	n, err := l.w.Write(buf)
 	if err != nil {
 		return uint64(n), err
@@ -148,32 +91,30 @@ func (l *Log) Append(entry *Entry) (uint64, error) {
 	return size, nil
 }
 
-func (l *Log) Get(index *IndexEntry, entry *Entry) error {
+func (l *log) Get(index *indexEntry) (*types.Entry, error) {
 	buf := make([]byte, index.Length)
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	_, err := l.f.ReadAt(buf, int64(index.Offset))
-	if err != nil && errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: record offset %d", ErrEntryNotFound, index.Offset)
+	n, err := l.f.ReadAt(buf, int64(index.Offset))
+
+	if err != nil && errors.Is(err, io.EOF) && uint64(n) < index.Length {
+		return nil, fmt.Errorf("%w: record offset %d", ErrEntryNotFound, index.Offset)
 	} else if err != nil {
-		return fmt.Errorf("failed to read log file %v at %d: %w", l.f.Name(), index.Offset, err)
+		return nil, fmt.Errorf("failed to read log file %v at %d: %w", l.f.Name(), index.Offset, err)
 	}
+
 	if !cmpCrc32(buf, buf[crcSize:]) {
-		return ErrLogCorrupted
+		return nil, ErrLogCorrupted
 	}
-	return entry.Unmarshal(buf[crcSize:])
+
+	entry := &types.Entry{}
+	return entry, entry.Unmarshal(buf[crcSize:])
 }
 
-func (l *Log) Flush() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (l *log) Flush() error {
 	return l.w.Flush()
 }
 
-func (l *Log) Sync() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.w.Flush(); err != nil {
+func (l *log) Sync() error {
+	if err := l.Flush(); err != nil {
 		return err
 	}
 	err := l.f.Sync()
@@ -183,20 +124,24 @@ func (l *Log) Sync() error {
 	return nil
 }
 
-func (l *Log) Close() error {
+func (l *log) Close() error {
 	if err := l.Sync(); err != nil {
 		return err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	return l.f.Close()
 }
 
-func (l *Log) Delete() error {
+func (l *log) Delete() error {
 	if err := l.f.Close(); err != nil {
 		return err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	return os.Remove(l.f.Name())
+}
+
+func (l *log) Size() (int64, error) {
+	stat, err := l.f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return stat.Size(), nil
 }

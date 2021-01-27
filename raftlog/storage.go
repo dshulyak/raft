@@ -2,6 +2,8 @@ package raftlog
 
 import (
 	"errors"
+	"io/ioutil"
+	"os"
 	"sync"
 
 	"github.com/dshulyak/raft/types"
@@ -35,25 +37,53 @@ func WithCache(size int) Option {
 	}
 }
 
-func New(logger *zap.Logger, iopts *IndexOptions, lopts *LogOptions, opts ...Option) (*Storage, error) {
-	index, err := NewIndex(logger, iopts)
-	if err != nil {
-		return nil, err
+func WithTempDir() Option {
+	return func(s *Storage) error {
+		dir, err := ioutil.TempDir("", "raft-store-")
+		if err != nil {
+			return err
+		}
+		s.conf.dataDir = dir
+		return nil
 	}
-	var last *IndexEntry
-	if !index.IsEmpty() {
-		lastIndex := index.LastIndex()
-		last = &lastIndex
-	}
-	// TODO index might have more recent data then the log
-	// in such case we need to find last **fully** written log
-	// and truncate both index and log file after that log
-	log, err := NewLog(logger, last, lopts)
-	if err != nil {
-		return nil, err
-	}
+}
 
-	st := &Storage{logger: logger.Sugar(), index: index, log: log}
+func WithDir(dir string) Option {
+	return func(s *Storage) error {
+		s.conf.dataDir = dir
+		return nil
+	}
+}
+
+func WithIndexSize(size int) Option {
+	return func(s *Storage) error {
+		s.conf.defaultIndexSize = size
+		return nil
+	}
+}
+
+func WithLogger(log *zap.Logger) Option {
+	return func(s *Storage) error {
+		s.logger = log.Sugar()
+		return nil
+	}
+}
+
+type config struct {
+	dataDir          string
+	defaultIndexSize int
+	maxSegmentSize   int
+	maxDirtyEntries  int
+}
+
+var defaultConfig = config{
+	maxSegmentSize:   512 << 20,
+	defaultIndexSize: defaultIndexSize,
+	maxDirtyEntries:  defaultMaxDirtyEntries,
+}
+
+func New(opts ...Option) (*Storage, error) {
+	st := &Storage{logger: zap.NewNop().Sugar(), conf: defaultConfig}
 
 	for _, opt := range opts {
 		if err := opt(st); err != nil {
@@ -61,36 +91,34 @@ func New(logger *zap.Logger, iopts *IndexOptions, lopts *LogOptions, opts ...Opt
 		}
 	}
 
-	if st.dirtyLimit == 0 {
-		st.dirtyLimit = defaultMaxDirtyEntries
-	}
 	if st.cache == nil {
 		st.cache = newCache(defaultCacheEntries)
 	}
-
-	var entry types.Entry
-	if last != nil {
-		if err := st.log.Get(last, &entry); err != nil {
-			return nil, err
-		}
+	seg, err := openSegment(st.logger, st.conf, 0)
+	if err != nil {
+		return nil, err
 	}
-	st.flushed = entry.Index
-	st.dirty = st.flushed
+	st.active = seg
+	st.dirty = st.active.lastIndex
 
-	if st.flushed > 0 {
-		var start uint64
-		d := st.flushed - st.cache.Capacity()
-		if d >= 0 {
-			start = d
+	if st.active.lastIndex > 0 {
+		var (
+			start uint64
+			num   = st.cache.Capacity()
+		)
+		if st.active.lastIndex > st.cache.Capacity() {
+			start = st.active.lastIndex - st.cache.Capacity()
+		} else {
+			num = st.active.lastIndex
 		}
-		entries := make([]*types.Entry, d)
+		entries := make([]*types.Entry, num)
 		for i := range entries {
-			entries[i], err = st.getFlushed(start + uint64(i) - 1)
+			entries[i], err = st.active.get(start + uint64(i) - 1)
 			if err != nil {
 				return nil, err
 			}
 		}
-		st.cache.Warmup(entries)
+		st.cache.Preload(entries)
 	}
 	return st, nil
 }
@@ -98,17 +126,17 @@ func New(logger *zap.Logger, iopts *IndexOptions, lopts *LogOptions, opts ...Opt
 type Storage struct {
 	logger *zap.SugaredLogger
 
+	conf config
+
 	mu sync.RWMutex
 
-	dirtyLimit uint64
 	// last flushed index. starts at 1
 	flushed uint64
 	// last appended index. starts at 1. never lower than flushed.
 	dirty uint64
 	cache *entriesCache
 
-	index *Index
-	log   *Log
+	active *segment
 }
 
 func (s *Storage) Get(i uint64) (*types.Entry, error) {
@@ -127,18 +155,7 @@ func (s *Storage) Get(i uint64) (*types.Entry, error) {
 
 	// TODO there must be an API to load many entries with one system call
 	// probably with a range query
-	return s.getFlushed(i - 1)
-}
-
-func (s *Storage) getFlushed(i uint64) (entry *types.Entry, err error) {
-	idx := s.index.Get(i)
-	if idx.Length == 0 && idx.Offset == 0 {
-		err = ErrEntryNotFound
-		return
-	}
-	entry = &types.Entry{}
-	err = s.log.Get(&idx, entry)
-	return
+	return s.active.get(i - 1)
 }
 
 func (s *Storage) IsEmpty() bool {
@@ -164,8 +181,8 @@ func (s *Storage) Append(entry *Entry) error {
 
 	s.dirty++
 	s.cache.Append(entry)
-	if s.dirty-s.flushed == s.dirtyLimit {
-		return s.sync()
+	if s.dirty-s.active.lastIndex == uint64(s.conf.maxDirtyEntries) {
+		return s.flush()
 	}
 	return nil
 }
@@ -176,31 +193,19 @@ func (s *Storage) Sync() error {
 	return s.sync()
 }
 
-func (s *Storage) sync() (err error) {
+func (s *Storage) flush() (err error) {
 	s.cache.IterateFrom(s.flushed+1, func(entry *types.Entry) bool {
-		var size uint64
-		size, err = s.log.Append(entry)
-		if err != nil {
-			return false
-		}
-		err = s.index.Append(size)
-		if err != nil {
-			return false
-		}
-		return true
+		err = s.active.append(entry)
+		return err == nil
 	})
-	if err != nil {
-		return err
-	}
+	return
+}
 
-	if err := s.log.Sync(); err != nil {
+func (s *Storage) sync() (err error) {
+	if err := s.flush(); err != nil {
 		return err
 	}
-	if err := s.index.Sync(); err != nil {
-		return err
-	}
-	s.flushed = s.dirty
-	return nil
+	return s.active.sync()
 }
 
 func (s *Storage) DeleteFrom(start uint64) error {
@@ -211,42 +216,27 @@ func (s *Storage) DeleteFrom(start uint64) error {
 
 	s.cache.DeleteFrom(start - 1)
 
-	offset := s.index.Truncate(start - 1)
-	if err := s.log.Truncate(offset); err != nil {
+	if err := s.active.deleteFrom(start - 1); err != nil {
 		return err
 	}
 
-	s.flushed = uint64(start - 1)
-	s.dirty = s.flushed
-
+	s.dirty = start - 1
 	return nil
 }
 
 func (s *Storage) Close() error {
-	s.logger.Debug("closing storage")
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// use multierr package
-	err1 := s.index.Close()
-	err2 := s.log.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
+	s.logger.Debug("closing storage")
+	return s.active.close()
 }
 
 func (s *Storage) Delete() error {
-	s.logger.Debug("deleting storage")
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err1 := s.index.Delete()
-	err2 := s.log.Delete()
-	if err1 != nil {
-		return err1
-	}
-	return err2
+	s.logger.Debug("deleting storage", "directory", s.conf.dataDir)
+
+	return os.RemoveAll(s.conf.dataDir)
 }

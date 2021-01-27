@@ -10,88 +10,78 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLogAppendGet(t *testing.T) {
-	log, err := NewLog(testLogger(t), nil, nil)
+func makeTestLog(t testing.TB) (*log, *os.File) {
+	t.Helper()
+
+	f, err := ioutil.TempFile("", "log-test-file-")
+	require.NoError(t, err)
+
+	log, err := openLog(testLogger(t).Sugar(), f.Name())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, log.Delete())
 	})
+	return log, f
+}
 
-	entries := 100000
-	offsets := make([]IndexEntry, entries)
+func TestLogAppendGet(t *testing.T) {
+	log, _ := makeTestLog(t)
+
+	entries := 10_000
+	offsets := make([]indexEntry, entries)
 	offset := uint64(0)
-	for i := 0; i < entries; i++ {
+	for i := 1; i <= entries; i++ {
 		size, err := log.Append(&Entry{
 			Index: uint64(i),
 		})
-		offsets[i] = IndexEntry{Offset: offset, Length: size}
 		require.NoError(t, err)
+		offsets[i-1] = indexEntry{Offset: offset, Length: size}
 		offset += size
 	}
 	require.NoError(t, log.Flush())
-	var entry Entry
+
 	for i := range offsets {
-		require.NoError(t, log.Get(&offsets[i], &entry), "entry at index %d", i)
-		require.Equal(t, i, int(entry.Index))
+		entry, err := log.Get(&offsets[i])
+		require.NoError(t, err, "entry at index %d", i)
+		require.Equal(t, i+1, int(entry.Index))
 	}
 }
 
 func TestLogCRCVerification(t *testing.T) {
-	f, err := ioutil.TempFile("", "log-test-file-")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, f.Close())
-	})
-	log, err := NewLog(testLogger(t), nil, &LogOptions{File: f.Name()})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, log.Delete())
-	})
+	log, f := makeTestLog(t)
 
 	size, err := log.Append(&Entry{Index: 1})
 	require.NoError(t, err)
+
 	require.NoError(t, log.Flush())
 
 	offset := uint64(0)
 	_, err = f.WriteAt([]byte{1, 2, 3}, int64(offset+size/2))
 	require.NoError(t, err)
 
-	var entry Entry
-	require.True(t, errors.Is(log.Get(&IndexEntry{Offset: offset, Length: size}, &entry), ErrLogCorrupted))
+	_, err = log.Get(&indexEntry{Offset: offset, Length: size})
+	require.True(t, errors.Is(err, ErrLogCorrupted),
+		"log is expected to be corrupted")
 }
 
 func TestLogReopen(t *testing.T) {
-	f, err := ioutil.TempFile("", "log-test-file-")
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	t.Cleanup(func() {
-		require.NoError(t, os.Remove(f.Name()))
-	})
-
-	log, err := NewLog(testLogger(t), nil, &LogOptions{File: f.Name()})
-	require.NoError(t, err)
+	log, _ := makeTestLog(t)
 
 	total := 100
 	for i := 0; i < total; i++ {
 		_, err := log.Append(&types.Entry{})
 		require.NoError(t, err)
 	}
+	require.NoError(t, log.Flush())
 
-	require.NoError(t, log.Close())
-
-	log, err = NewLog(testLogger(t), nil, &LogOptions{File: f.Name()})
+	log, err := openLog(testLogger(t).Sugar(), log.f.Name())
 	require.NoError(t, err)
 	_, err = log.Append(&types.Entry{})
 	require.NoError(t, err)
 }
 
 func BenchmarkLogAppend(b *testing.B) {
-	log, err := NewLog(testLogger(b), nil, nil)
-	require.NoError(b, err)
-	b.Cleanup(func() {
-		require.NoError(b, log.Delete())
-	})
+	log, _ := makeTestLog(b)
 
 	buf := make([]byte, 10)
 	b.ResetTimer()
