@@ -534,28 +534,6 @@ func TestRaftProposalReplication(t *testing.T) {
 	require.Equal(t, types.Entry_APP, cluster.proposals[1].Entry.Type)
 }
 
-func TestRaftLogClean(t *testing.T) {
-	cluster := getTestCluster(t)
-	cluster.run(t, cluster.triggerTimeout(1), 1)
-
-	for i := 1; i <= cluster.size; i++ {
-		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2})
-		require.True(t, cluster.logs[NodeID(i)].IsEmpty(),
-			"log for node %d should be cleared", i,
-		)
-	}
-}
-
-func TestRaftLogOverwrite(t *testing.T) {
-	cluster := getTestCluster(t)
-	cluster.run(t, cluster.triggerTimeout(1), 1)
-
-	for i := 1; i <= cluster.size; i++ {
-		cluster.states[NodeID(i)].Next(&AppendEntries{Term: 2, PrevLog: types.LogHeader{Index: 1}})
-		require.True(t, cluster.logs[NodeID(i)].IsEmpty())
-	}
-}
-
 func TestRaftReads(t *testing.T) {
 	cluster := getTestCluster(t)
 	leader := NodeID(1)
@@ -811,7 +789,7 @@ func (c *clusterMachine) Check(t *rapid.T) {
 	c.cluster.iterateLogs(func(log *raftlog.Storage) bool {
 		_, err := log.Get(c.state.commit)
 		if err != nil {
-			require.EqualError(t, err, raftlog.ErrEntryNotFound.Error())
+			require.EqualError(t, err, raftlog.ErrEntryFromFuture.Error())
 		}
 		n++
 		return true

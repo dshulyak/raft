@@ -354,15 +354,9 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			Follower: f.id,
 		}, msg.Leader)
 		return nil
-	}
-
-	if !empty && msg.PrevLog.Index == 0 {
-		f.logger.Debugw("cleaning local log")
-		// 1 is a first valid index for a non empty log
-		f.must(f.log.DeleteFrom(1), "failed to delete a log")
-	} else if !empty {
+	} else if !empty && msg.PrevLog.Index > 0 {
 		entry, err := f.log.Get(msg.PrevLog.Index)
-		if errors.Is(err, raftlog.ErrEntryNotFound) {
+		if errors.Is(err, raftlog.ErrEntryFromFuture) {
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
 				Follower: f.id,
@@ -372,12 +366,6 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			f.must(err, "failed to get log entry")
 		}
 		if entry.Term != msg.PrevLog.Term {
-			f.logger.Debugw("deleting log file",
-				"at index", msg.PrevLog.Index,
-				"local prev term", entry.Term,
-				"new term", msg.PrevLog.Term,
-			)
-			f.must(f.log.DeleteFrom(msg.PrevLog.Index), "failed to delete a log")
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
 				Follower: f.id,
