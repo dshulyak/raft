@@ -17,8 +17,6 @@ import (
 var (
 	// ErrLogCorrupted returned if computed crc doesn't match stored.
 	ErrLogCorrupted = errors.New("log is corrupted")
-	// ErrUnexpectedEOF detects torn write.
-	ErrUnexpectedEOF = errors.New("unexpected EOF")
 )
 
 var (
@@ -155,7 +153,7 @@ func readEntry(r *bufio.Reader, entry *types.Entry) (int, error) {
 	size, n, err := readUvarint(r)
 	if err != nil {
 		if n > 0 && errors.Is(err, io.EOF) {
-			return 0, ErrUnexpectedEOF
+			return 0, io.ErrUnexpectedEOF
 		}
 		return 0, err
 	}
@@ -166,9 +164,7 @@ func readEntry(r *bufio.Reader, entry *types.Entry) (int, error) {
 	n, err = io.ReadFull(r, buf)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			if n < int(size) {
-				return total + n, ErrUnexpectedEOF
-			}
+			return total + n, io.ErrUnexpectedEOF
 		} else {
 			return 0, err
 		}
