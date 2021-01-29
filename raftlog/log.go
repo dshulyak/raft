@@ -25,7 +25,7 @@ var (
 	readerPool = sync.Pool{
 		New: func() interface{} {
 			return &offsetReader{
-				R: bufio.NewReaderSize(nil, 128),
+				R: bufio.NewReader(nil),
 			}
 		},
 	}
