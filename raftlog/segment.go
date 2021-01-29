@@ -1,11 +1,18 @@
 package raftlog
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
+)
+
+var (
+	// ScanCanceled returned if scan was terminated.
+	ScanCanceled = errors.New("scan canceled")
 )
 
 const (
@@ -17,44 +24,36 @@ const (
 	segmentUpdated
 )
 
-func openSegment(logger *zap.SugaredLogger, conf config, index uint64) (*segment, error) {
+func openSegment(logger *zap.SugaredLogger, conf config, n int) (*segment, error) {
 	seg := &segment{
-		logger:    logger,
-		maxSize:   conf.maxSegmentSize,
-		prevIndex: index,
-		lastIndex: index,
+		n:       n,
+		logger:  logger,
+		maxSize: conf.maxSegmentSize,
 	}
 	var err error
-	seg.idx, err = openIndex(logger,
-		filepath.Join(
-			conf.dataDir,
-			fmt.Sprintf("%s-%d.%s", indexPrefix, index, indexExt),
-		),
-		conf.defaultIndexSize,
-	)
-	if err != nil {
-		return nil, err
-	}
 	seg.log, err = openLog(logger,
 		filepath.Join(conf.dataDir,
-			fmt.Sprintf("%s-%d.%s", logPrefix, index, logExt),
+			fmt.Sprintf("%s%d%s", logPrefix, n, logExt),
 		),
 	)
 	if err != nil {
 		return nil, err
 	}
-	if !seg.idx.IsEmpty() {
-		last := seg.idx.LastIndex()
-		entry, err := seg.log.Get(&last)
-		if err != nil {
-			return nil, err
-		}
-		seg.lastIndex = entry.Index
+
+	size, err := seg.log.Size()
+	if err != nil {
+		return nil, err
 	}
+	if size == 0 {
+		seg.state |= segmentCreated
+	}
+	seg.size = int(size)
 	return seg, nil
 }
 
 type segment struct {
+	n int
+
 	logger *zap.SugaredLogger
 
 	maxSize int
@@ -62,15 +61,6 @@ type segment struct {
 
 	state uint
 
-	// prevIndex is the last index in the previous segment.
-	// 0 for the first segment.
-	prevIndex uint64
-	// lastIndex is the last index in the current segment.
-	// initialized to prevIndex.
-	// number of appended entries is equal to lastIndex - prevIndex
-	lastIndex uint64
-
-	idx *index
 	log *log
 }
 
@@ -86,40 +76,48 @@ func (s *segment) isUpdated() bool {
 	return s.state&segmentUpdated > 0
 }
 
-func (s *segment) isEmpty() bool {
-	return s.lastIndex == s.prevIndex
+func (s *segment) String() string {
+	return fmt.Sprintf("segment %d", s.n)
 }
 
-func (s *segment) append(entry *types.Entry) error {
+func (s *segment) append(entry *types.Entry) (int, int, error) {
 	if !s.hasSpace(entry) {
 		panic("segment is full")
 	}
 
 	esize, err := s.log.Append(entry)
 	if err != nil {
-		return err
-	}
-	err = s.idx.Append(esize)
-	if err != nil {
-		return err
+		return 0, 0, err
 	}
 
-	s.lastIndex++
 	s.state |= segmentUpdated
-	s.size += int(esize)
-	return nil
+	offset := s.size
+	s.size += esize
+	return offset, esize, nil
 }
 
-func (s *segment) entries() uint64 {
-	return s.lastIndex - s.prevIndex
+func (s *segment) get(offset uint32) (*types.Entry, error) {
+	return s.log.Get(offset)
 }
 
-func (s *segment) get(i uint64) (*types.Entry, error) {
-	idx := s.idx.Get(i - s.prevIndex)
-	if idx.Length == 0 && idx.Offset == 0 {
-		return nil, ErrEntryNotFound
+func (s *segment) scan(f func(int, int64, *types.Entry) bool) error {
+	scanner := s.log.scanner(0)
+	defer scanner.close()
+	for {
+		offset := scanner.offset
+		entry, err := scanner.next()
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			// TODO unexpected EOF
+			return err
+		}
+		if !f(s.n, offset, entry) {
+			return ScanCanceled
+		}
 	}
-	return s.log.Get(&idx)
 }
 
 func (s *segment) sync() error {
@@ -129,42 +127,14 @@ func (s *segment) sync() error {
 	if err := s.log.Sync(); err != nil {
 		return err
 	}
-	if err := s.idx.Sync(); err != nil {
-		return err
-	}
 	s.state ^= segmentUpdated
-	s.state &= ^(segmentCreated) // do not flip, it is set only once
-	return nil
-}
-
-func (s *segment) deleteFrom(start uint64) error {
-	from := start
-	if start < s.prevIndex {
-		from = 0
-	} else {
-		from -= s.prevIndex
-	}
-
-	offset := s.idx.Truncate(from)
-	if err := s.log.Truncate(offset); err != nil {
-		return err
-	}
-
-	s.size -= int(uint64(s.size) - offset)
-	if start < s.prevIndex {
-		s.lastIndex = s.prevIndex
-	} else {
-		s.lastIndex = start - 1
-	}
 	return nil
 }
 
 func (s *segment) close() error {
-	// use multierr package
-	err1 := s.idx.Close()
-	err2 := s.log.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
+	return s.log.Close()
+}
+
+func (s *segment) delete() error {
+	return s.log.Delete()
 }

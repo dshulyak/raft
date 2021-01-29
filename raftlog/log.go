@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
@@ -13,20 +14,26 @@ import (
 	"github.com/dshulyak/raft/types"
 )
 
-const (
-	opTypeSize = 1
+var (
+	// ErrLogCorrupted returned if computed crc doesn't match stored.
+	ErrLogCorrupted = errors.New("log is corrupted")
+	// ErrUnexpectedEOF detects torn write.
+	ErrUnexpectedEOF = errors.New("unexpected EOF")
 )
 
 var (
-	ErrLogCorrupted  = errors.New("log is corrupted")
-	ErrEntryNotFound = errors.New("entry not found")
-	ErrLogEnd        = errors.New("log end")
+	readerPool = sync.Pool{
+		New: func() interface{} {
+			return &offsetReader{
+				R: bufio.NewReaderSize(nil, 128),
+			}
+		},
+	}
 )
 
-type Entry = types.Entry
-
 func onDiskSize(entry *types.Entry) int {
-	return entry.Size() + int(crcSize)
+	size := entry.Size()
+	return uvarintSize(uint64(size)) + size + crcSize
 }
 
 func openLog(logger *zap.SugaredLogger, file string) (*log, error) {
@@ -37,8 +44,9 @@ func openLog(logger *zap.SugaredLogger, file string) (*log, error) {
 	return l, nil
 }
 
-type fileBackend interface {
+type logWriter interface {
 	io.Writer
+	io.ByteWriter
 	Flush() error
 }
 
@@ -46,7 +54,7 @@ type log struct {
 	logger *zap.SugaredLogger
 
 	f *os.File
-	w fileBackend
+	w logWriter
 }
 
 func (l *log) openAt(file string) error {
@@ -58,55 +66,46 @@ func (l *log) openAt(file string) error {
 		return err
 	}
 	l.f = f
+	l.logger.Debugw("opened log file", "path", file)
 	l.w = bufio.NewWriter(f)
 	return nil
 }
 
-func (l *log) Truncate(offset uint64) error {
-	if err := l.w.Flush(); err != nil {
-		return err
-	}
+func (l *log) Append(entry *types.Entry) (int, error) {
+	size := entry.Size() + crcSize
 
-	if err := l.f.Truncate(int64(offset)); err != nil {
-		return fmt.Errorf("failed to truncate log file %v up to %d: %w", l.f.Name(), offset, err)
+	total := 0
+	n, err := writeUvarint(l.w, uint64(size))
+	if err != nil {
+		return 0, err
 	}
-	return nil
-}
+	total += n
 
-func (l *log) Append(entry *Entry) (uint64, error) {
-	size := uint64(onDiskSize(entry))
 	buf := make([]byte, size)
 	if _, err := entry.MarshalTo(buf[crcSize:]); err != nil {
 		return 0, err
 	}
-	_ = putCrc32(buf, buf[crcSize:])
+	putCrc32(buf, buf[crcSize:])
 
-	n, err := l.w.Write(buf)
+	n, err = l.w.Write(buf)
 	if err != nil {
-		return uint64(n), err
+		return n, err
 	}
-	if uint64(n) != size {
-		return uint64(n), io.ErrShortWrite
+	if n != size {
+		return n, io.ErrShortWrite
 	}
-	return size, nil
+	total += n
+	return total, nil
 }
 
-func (l *log) Get(index *indexEntry) (*types.Entry, error) {
-	buf := make([]byte, index.Length)
-	n, err := l.f.ReadAt(buf, int64(index.Offset))
-
-	if err != nil && errors.Is(err, io.EOF) && uint64(n) < index.Length {
-		return nil, fmt.Errorf("%w: record offset %d", ErrEntryNotFound, index.Offset)
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to read log file %v at %d: %w", l.f.Name(), index.Offset, err)
-	}
-
-	if !cmpCrc32(buf, buf[crcSize:]) {
-		return nil, ErrLogCorrupted
-	}
+func (l *log) Get(offset uint32) (*types.Entry, error) {
+	r := readerPool.Get().(*offsetReader)
+	r.Reset(l.f, int64(offset))
+	defer readerPool.Put(r)
 
 	entry := &types.Entry{}
-	return entry, entry.Unmarshal(buf[crcSize:])
+	_, err := readEntry(r.R, entry)
+	return entry, err
 }
 
 func (l *log) Flush() error {
@@ -144,4 +143,63 @@ func (l *log) Size() (int64, error) {
 		return 0, err
 	}
 	return stat.Size(), nil
+}
+
+func (l *log) scanner(offset uint32) *scanner {
+	r := readerPool.Get().(*offsetReader)
+	r.Reset(l.f, int64(offset))
+	return &scanner{r: r}
+}
+
+func readEntry(r *bufio.Reader, entry *types.Entry) (int, error) {
+	size, n, err := readUvarint(r)
+	if err != nil {
+		if n > 0 && errors.Is(err, io.EOF) {
+			return 0, ErrUnexpectedEOF
+		}
+		return 0, err
+	}
+	total := n
+
+	buf := make([]byte, size)
+
+	n, err = io.ReadFull(r, buf)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			if n < int(size) {
+				return total + n, ErrUnexpectedEOF
+			}
+		} else {
+			return 0, err
+		}
+	}
+
+	total += n
+
+	if !cmpCrc32(buf, buf[crcSize:]) {
+		return 0, ErrLogCorrupted
+	}
+
+	if err := entry.Unmarshal(buf[crcSize:]); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+type scanner struct {
+	r *offsetReader
+
+	offset int64
+}
+
+func (s *scanner) next() (*types.Entry, error) {
+	entry := &types.Entry{}
+	n, err := readEntry(s.r.R, entry)
+	s.offset += int64(n)
+	return entry, err
+}
+
+func (s *scanner) close() {
+	readerPool.Put(s.r)
+	s.r = nil
 }

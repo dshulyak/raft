@@ -6,16 +6,15 @@ import (
 )
 
 const (
-	crcSize uint64 = 4
+	crcSize = 4
 )
 
 var (
 	table = crc32.MakeTable(crc32.Castagnoli)
 )
 
-func putCrc32(buf []byte, data []byte) uint64 {
+func putCrc32(buf []byte, data []byte) {
 	binary.LittleEndian.PutUint32(buf, getCrc32(data))
-	return crcSize
 }
 
 func getCrc32(data []byte) uint32 {

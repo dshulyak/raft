@@ -2,17 +2,35 @@ package raftlog
 
 import (
 	"errors"
+	"flag"
 	"testing"
 
 	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest"
 	"pgregory.net/rapid"
 )
 
-func makeTestStorage(t testing.TB) *Storage {
-	t.Helper()
+var logLevel = flag.String("log-level", "panic", "test environment log level")
 
-	store, err := New(WithLogger(testLogger(t)), WithTempDir())
+type testingHelper interface {
+	Helper()
+	zaptest.TestingT
+}
+
+func testLogger(t testingHelper) *zap.Logger {
+	t.Helper()
+	var level zapcore.Level
+	require.NoError(t, level.Set(*logLevel))
+	return zaptest.NewLogger(t, zaptest.Level(level), zaptest.WrapOptions(zap.AddCaller()))
+}
+
+func makeTestStorage(t testing.TB, opts ...Option) *Storage {
+	t.Helper()
+	opts = append(opts, WithLogger(testLogger(t)), WithTempDir())
+	store, err := New(opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Delete()) })
 	return store
@@ -25,53 +43,60 @@ func TestStorageLastEmpty(t *testing.T) {
 	require.True(t, errors.Is(err, ErrEmptyLog), "expected empty log error")
 }
 
-func TestStorageDeleteAppend(t *testing.T) {
-	store := makeTestStorage(t)
+func TestStorageRescan(t *testing.T) {
+	opts := []Option{WithSegmentSize(512), WithCache(2)}
+	store := makeTestStorage(t, opts...)
 
-	entries := 2
-	for i := 0; i < entries; i++ {
-		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
+	total := 200
+	for i := 1; i <= total; i++ {
+		require.NoError(t, store.Append(&types.Entry{Index: uint64(i)}))
 	}
-	require.NoError(t, store.Sync())
 
-	last, err := store.Last()
+	require.NoError(t, store.Sync())
+	dir := store.Location()
+
+	require.NoError(t, store.Close())
+
+	opts = append(opts, WithLogger(testLogger(t)), WithDir(dir))
+	store, err := New(opts...)
 	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
 
-	require.NoError(t, store.DeleteFrom(uint64(entries)))
-	for i := entries; i < entries*2; i++ {
-		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
-	}
-	require.NoError(t, store.Sync())
-	last, err = store.Last()
-	require.NoError(t, err)
-	require.Equal(t, entries*2-1, int(last.Index))
-}
-
-func TestStorageLogDeletion(t *testing.T) {
-	store := makeTestStorage(t)
-
-	entries := 1000
-	for i := 1; i <= entries; i++ {
-		require.NoError(t, store.Append(&Entry{Index: uint64(i)}))
-	}
-	require.NoError(t, store.Sync())
-	from := 100
-	require.NoError(t, store.DeleteFrom(uint64(from)+1))
-
-	for i := 1; i <= from; i++ {
+	for i := 1; i <= total; i++ {
 		entry, err := store.Get(uint64(i))
 		require.NoError(t, err)
 		require.Equal(t, i, int(entry.Index))
 	}
+}
 
-	require.NoError(t, store.DeleteFrom(1))
-	require.True(t, store.IsEmpty())
+func TestStorageRewrite(t *testing.T) {
+	store := makeTestStorage(t)
+
+	total := 200
+	terms := 2
+	for term := 1; term <= terms; term++ {
+		for i := 1; i <= total; i++ {
+			require.NoError(t, store.Append(&types.Entry{
+				Index: uint64(i),
+				Term:  uint64(term),
+			}))
+		}
+	}
+
+	require.NoError(t, store.Sync())
+
+	for i := 1; i <= total; i++ {
+		entry, err := store.Get(uint64(i))
+		require.NoError(t, err)
+		require.Equal(t, i, int(entry.Index))
+		require.Equal(t, terms, int(entry.Term))
+	}
 }
 
 type storageMachine struct {
-	storage     *Storage
-	term, index uint64
-	logs        []*Entry
+	storage *Storage
+	index   uint64
+	logs    []*types.Entry
 }
 
 func (s *storageMachine) Init(t *rapid.T) {
@@ -103,14 +128,10 @@ func (s *storageMachine) Get(t *rapid.T) {
 func (s *storageMachine) Append(t *rapid.T) {
 	size := rapid.IntRange(16, 1024).Draw(t, "size").(int)
 	buf := make([]byte, size)
-	if rapid.Bool().Draw(t, "term").(bool) {
-		s.term++
-	}
 	s.index++
-	entry := &types.Entry{Index: s.index, Term: s.term, Op: buf}
+	entry := &types.Entry{Index: s.index, Op: buf}
 	require.NoError(t, s.storage.Append(entry))
 	s.logs = append(s.logs, entry)
-	require.NoError(t, s.storage.Sync())
 }
 
 func (s *storageMachine) Sync(t *rapid.T) {

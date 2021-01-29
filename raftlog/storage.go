@@ -2,8 +2,11 @@ package raftlog
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
+	"math"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/dshulyak/raft/types"
@@ -11,7 +14,9 @@ import (
 )
 
 var (
-	ErrEmptyLog = errors.New("log is empty")
+	ErrEmptyLog        = errors.New("log is empty")
+	ErrEntryTooLarge   = errors.New("entry too large")
+	ErrEntryFromFuture = errors.New("entry from future")
 )
 
 const (
@@ -20,6 +25,8 @@ const (
 	// number of in-memory entries that are not flushed on disk
 	// can't be larger then defaultCacheEntries
 	defaultMaxDirtyEntries = 4096
+
+	maxSegmentSize = math.MaxUint32
 )
 
 func notZero(i uint64) {
@@ -27,6 +34,8 @@ func notZero(i uint64) {
 		panic("zero refers to an empty log")
 	}
 }
+
+type Entry = types.Entry
 
 type Option func(*Storage) error
 
@@ -62,6 +71,13 @@ func WithIndexSize(size int) Option {
 	}
 }
 
+func WithSegmentSize(size int) Option {
+	return func(s *Storage) error {
+		s.conf.maxSegmentSize = size
+		return nil
+	}
+}
+
 func WithLogger(log *zap.Logger) Option {
 	return func(s *Storage) error {
 		s.logger = log.Sugar()
@@ -74,12 +90,16 @@ type config struct {
 	defaultIndexSize int
 	maxSegmentSize   int
 	maxDirtyEntries  int
+	maxEntrySize     int
+	cacheSize        int
 }
 
 var defaultConfig = config{
 	maxSegmentSize:   512 << 20,
 	defaultIndexSize: defaultIndexSize,
 	maxDirtyEntries:  defaultMaxDirtyEntries,
+	maxEntrySize:     4096 - int(crcSize),
+	cacheSize:        defaultMaxDirtyEntries,
 }
 
 func New(opts ...Option) (*Storage, error) {
@@ -90,37 +110,39 @@ func New(opts ...Option) (*Storage, error) {
 			return nil, err
 		}
 	}
+	if st.conf.maxSegmentSize > maxSegmentSize {
+		return nil, fmt.Errorf("segment size can't be larger then %v", maxSegmentSize)
+	}
 
 	if st.cache == nil {
-		st.cache = newCache(defaultCacheEntries)
+		st.cache = newCache(st.conf.cacheSize)
 	}
-	seg, err := openSegment(st.logger, st.conf, 0)
+	segs, err := scanSegments(st.logger, st.conf)
 	if err != nil {
 		return nil, err
 	}
-	st.active = seg
-	st.dirty = st.active.lastIndex
+	st.segs = segs
 
-	if st.active.lastIndex > 0 {
-		var (
-			start uint64
-			num   = st.cache.Capacity()
-		)
-		if st.active.lastIndex > st.cache.Capacity() {
-			start = st.active.lastIndex - st.cache.Capacity()
-		} else {
-			num = st.active.lastIndex
-		}
-		entries := make([]*types.Entry, num)
-		for i := range entries {
-			entries[i], err = st.active.get(start + uint64(i) - 1)
-			if err != nil {
-				return nil, err
-			}
-		}
-		st.cache.Preload(entries)
+	idx, err := openIndex(st.logger,
+		filepath.Join(st.conf.dataDir, "raft.idx"),
+		st.conf.defaultIndexSize,
+	)
+	if err != nil {
+		return nil, err
 	}
-	return st, nil
+	st.idx = idx
+
+	e1 := st.segs.scan(func(n int, offset int64, entry *types.Entry) bool {
+		st.lastIndex = entry.Index
+		return st.idx.Set(entry.Index, &indexEntry{
+			Segment: uint16(n),
+			Offset:  uint32(offset),
+		}) == nil
+	})
+	if e1 != nil {
+		return nil, e1
+	}
+	return st, err
 }
 
 type Storage struct {
@@ -130,13 +152,15 @@ type Storage struct {
 
 	mu sync.RWMutex
 
-	// last flushed index. starts at 1
-	flushed uint64
-	// last appended index. starts at 1. never lower than flushed.
-	dirty uint64
+	// last appended index
+	lastIndex uint64
+	flushed   uint64
+
+	// cache is required for buffering uncommited entries.
 	cache *entriesCache
 
-	active *segment
+	idx  *index
+	segs *segments
 }
 
 func (s *Storage) Get(i uint64) (*types.Entry, error) {
@@ -144,44 +168,55 @@ func (s *Storage) Get(i uint64) (*types.Entry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if i > s.dirty {
-		return nil, ErrEntryNotFound
+	if i > s.lastIndex {
+		return nil, ErrEntryFromFuture
 	}
 
-	entry := s.cache.Get(i - 1)
+	entry := s.cache.Get(i)
 	if entry != nil {
 		return entry, nil
 	}
 
-	// TODO there must be an API to load many entries with one system call
-	// probably with a range query
-	return s.active.get(i - 1)
+	ie := s.idx.Get(i)
+	return s.segs.get(&ie)
 }
 
 func (s *Storage) IsEmpty() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.dirty == 0
+	return s.lastIndex == 0
 }
 
 func (s *Storage) Last() (entry *types.Entry, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.dirty == 0 {
+	if s.lastIndex == 0 {
 		err = ErrEmptyLog
 		return
 	}
-	return s.cache.Get(s.dirty - 1), nil
+	entry = s.cache.Get(s.lastIndex)
+	if entry != nil {
+		return
+	}
+
+	ie := s.idx.Get(s.lastIndex)
+	return s.segs.get(&ie)
 }
 
-func (s *Storage) Append(entry *Entry) error {
+func (s *Storage) Append(entry *types.Entry) error {
+	if entry.Size() > s.conf.maxEntrySize {
+		return fmt.Errorf("%w: encoded size should not be larger then %d",
+			ErrEntryTooLarge, s.conf.maxEntrySize)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.dirty++
-	s.cache.Append(entry)
-	if s.dirty-s.active.lastIndex == uint64(s.conf.maxDirtyEntries) {
+	s.lastIndex = entry.Index
+
+	s.cache.Add(entry)
+	if s.lastIndex-s.flushed == uint64(s.conf.maxDirtyEntries) {
 		return s.flush()
 	}
 	return nil
@@ -194,10 +229,26 @@ func (s *Storage) Sync() error {
 }
 
 func (s *Storage) flush() (err error) {
-	s.cache.IterateFrom(s.flushed+1, func(entry *types.Entry) bool {
-		err = s.active.append(entry)
+	if s.flushed == s.lastIndex {
+		return nil
+	}
+	s.cache.Iterate(s.flushed+1, s.lastIndex, func(entry *types.Entry) bool {
+		var (
+			offset int
+		)
+		offset, _, err = s.segs.append(entry)
+		if err != nil {
+			return false
+		}
+		err = s.idx.Set(entry.Index, &indexEntry{
+			Segment: uint16(s.segs.active.n),
+			Offset:  uint32(offset),
+		})
 		return err == nil
 	})
+	if err != nil {
+		return err
+	}
 	return
 }
 
@@ -205,23 +256,11 @@ func (s *Storage) sync() (err error) {
 	if err := s.flush(); err != nil {
 		return err
 	}
-	return s.active.sync()
+	return s.segs.sync()
 }
 
-func (s *Storage) DeleteFrom(start uint64) error {
-	notZero(start)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.cache.DeleteFrom(start - 1)
-
-	if err := s.active.deleteFrom(start - 1); err != nil {
-		return err
-	}
-
-	s.dirty = start - 1
-	return nil
+func (s *Storage) Location() string {
+	return s.segs.dir.Name()
 }
 
 func (s *Storage) Close() error {
@@ -229,10 +268,12 @@ func (s *Storage) Close() error {
 	defer s.mu.Unlock()
 
 	s.logger.Debug("closing storage")
-	return s.active.close()
+	return s.segs.close()
 }
 
 func (s *Storage) Delete() error {
+	s.Close()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
