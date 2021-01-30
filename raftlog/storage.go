@@ -41,7 +41,7 @@ type Option func(*Storage) error
 
 func WithCache(size int) Option {
 	return func(s *Storage) error {
-		s.cache = newCache(size)
+		s.conf.cacheSize = size
 		return nil
 	}
 }
@@ -102,6 +102,13 @@ var defaultConfig = config{
 	cacheSize:        defaultMaxDirtyEntries,
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func New(opts ...Option) (*Storage, error) {
 	st := &Storage{logger: zap.NewNop().Sugar(), conf: defaultConfig}
 
@@ -115,9 +122,9 @@ func New(opts ...Option) (*Storage, error) {
 		return nil, fmt.Errorf("segment size can't be larger then %v", maxSegmentSize)
 	}
 
-	if st.cache == nil {
-		st.cache = newCache(st.conf.cacheSize)
-	}
+	st.cache = newCache(st.conf.cacheSize)
+	st.conf.maxDirtyEntries = min(st.conf.maxDirtyEntries, st.conf.cacheSize)
+
 	segs, err := scanSegments(st.logger, st.conf)
 	if err != nil {
 		return nil, err
@@ -167,7 +174,7 @@ func (s *Storage) Get(i uint64) (*types.Entry, error) {
 		return nil, ErrEntryFromFuture
 	}
 
-	entry := s.cache.Get(i)
+	entry := s.cache.Get(i - 1)
 	if entry != nil {
 		return entry, nil
 	}
@@ -190,7 +197,7 @@ func (s *Storage) Last() (entry *types.Entry, err error) {
 		err = ErrEmptyLog
 		return
 	}
-	entry = s.cache.Get(s.lastIndex)
+	entry = s.cache.Get(s.lastIndex - 1)
 	if entry != nil {
 		return
 	}
@@ -211,6 +218,7 @@ func (s *Storage) Append(entry *types.Entry) error {
 	s.lastIndex = entry.Index
 
 	s.cache.Add(entry)
+
 	if s.lastIndex-s.flushed == uint64(s.conf.maxDirtyEntries) {
 		return s.flush()
 	}
@@ -227,10 +235,11 @@ func (s *Storage) flush() (err error) {
 	if s.flushed == s.lastIndex {
 		return nil
 	}
-	s.cache.Iterate(s.flushed+1, s.lastIndex, func(entry *types.Entry) bool {
+	s.cache.IterateFrom(s.flushed, func(entry *types.Entry) bool {
 		var (
 			offset int
 		)
+
 		offset, _, err = s.segs.append(entry)
 		if err != nil {
 			return false
@@ -244,6 +253,7 @@ func (s *Storage) flush() (err error) {
 	if err != nil {
 		return err
 	}
+	s.flushed = s.lastIndex
 	return
 }
 

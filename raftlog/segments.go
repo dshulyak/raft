@@ -20,6 +20,10 @@ const (
 	indexExt  = "idx"
 )
 
+func segmentPath(dir string, n int) string {
+	return filepath.Join(dir, logPrefix+strconv.Itoa(n)+logExt)
+}
+
 func scanSegments(logger *zap.SugaredLogger, conf config) (*segments, error) {
 	err := os.MkdirAll(conf.dataDir, 0o700)
 	if err != nil && !os.IsExist(err) {

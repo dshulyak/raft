@@ -3,7 +3,6 @@ package raftlog
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/dshulyak/raft/types"
 	"go.uber.org/zap"
@@ -30,11 +29,7 @@ func openSegment(logger *zap.SugaredLogger, conf config, n int) (*segment, error
 		maxSize: conf.maxSegmentSize,
 	}
 	var err error
-	seg.log, err = openLog(logger,
-		filepath.Join(conf.dataDir,
-			fmt.Sprintf("%s%d%s", logPrefix, n, logExt),
-		),
-	)
+	seg.log, err = openLog(logger, segmentPath(conf.dataDir, n))
 	if err != nil {
 		return nil, err
 	}

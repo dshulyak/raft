@@ -3,6 +3,7 @@ package raftlog
 import (
 	"errors"
 	"flag"
+	"os"
 	"testing"
 
 	"github.com/dshulyak/raft/types"
@@ -29,7 +30,7 @@ func testLogger(t testingHelper) *zap.Logger {
 
 func makeTestStorage(t testing.TB, opts ...Option) *Storage {
 	t.Helper()
-	opts = append(opts, WithLogger(testLogger(t)), WithTempDir())
+	opts = append([]Option{WithLogger(testLogger(t)), WithTempDir()}, opts...)
 	store, err := New(opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Delete()) })
@@ -53,11 +54,9 @@ func TestStorageRescan(t *testing.T) {
 	}
 
 	require.NoError(t, store.Sync())
-	dir := store.Location()
-
 	require.NoError(t, store.Close())
 
-	opts = append(opts, WithLogger(testLogger(t)), WithDir(dir))
+	opts = append(opts, WithLogger(testLogger(t)), WithDir(store.Location()))
 	store, err := New(opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
@@ -91,6 +90,67 @@ func TestStorageRewrite(t *testing.T) {
 		require.Equal(t, i, int(entry.Index))
 		require.Equal(t, terms, int(entry.Term))
 	}
+}
+
+func TestStorageCorrupted(t *testing.T) {
+	store := makeTestStorage(t, WithCache(1))
+	for i := 1; i <= 2; i++ {
+		require.NoError(t, store.Append(&types.Entry{
+			Index: uint64(i),
+			Op:    make([]byte, 10),
+		}))
+	}
+	require.NoError(t, store.Sync())
+
+	f, err := os.OpenFile(segmentPath(store.Location(), 0), os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		f.Close()
+	})
+
+	_, err = f.WriteAt([]byte("abc"), 5)
+	require.NoError(t, err)
+
+	_, err = store.Get(1)
+	require.True(t, errors.Is(err, ErrLogCorrupted), "log is not corrupted")
+}
+
+func TestStorageRepair(t *testing.T) {
+	store := makeTestStorage(t)
+	valid := 5
+	offset := 0
+	for i := 1; i <= 10; i++ {
+		entry := &types.Entry{
+			Index: uint64(i),
+			Op:    make([]byte, 10),
+		}
+		if i <= valid {
+			offset += onDiskSize(entry)
+		}
+		require.NoError(t, store.Append(entry))
+	}
+
+	require.NoError(t, store.Sync())
+	require.NoError(t, store.Close())
+
+	f, err := os.OpenFile(segmentPath(store.Location(), 0), os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		f.Close()
+	})
+
+	// valid offset plus arbitrary number of bytes to cause unexpected eof
+	require.NoError(t, f.Truncate(int64(offset)+4))
+
+	store = makeTestStorage(t, WithDir(store.Location()))
+
+	for i := 1; i <= valid; i++ {
+		entry, err := store.Get(uint64(i))
+		require.NoError(t, err)
+		require.Equal(t, i, int(entry.Index))
+	}
+	_, err = store.Get(uint64(valid + 1))
+	require.True(t, errors.Is(err, ErrEntryFromFuture), "entry must not be in the log")
 }
 
 type storageMachine struct {
