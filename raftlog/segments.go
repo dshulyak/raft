@@ -3,6 +3,7 @@ package raftlog
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,14 +89,61 @@ type segments struct {
 	dir *os.File
 }
 
-func (s *segments) scan(f func(int, int64, *types.Entry) bool) error {
-	for _, seg := range s.list {
-		if err := seg.scan(f); err != nil {
-			if errors.Is(err, ScanCanceled) {
-				return nil
+func (s *segments) rescan(idx *index) (uint64, error) {
+	var last uint64
+	for i, seg := range s.list {
+		scan := seg.scanner(0)
+
+		for {
+			offset := scan.offset
+			entry, err := scan.next()
+
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if errors.Is(err, io.ErrUnexpectedEOF) {
+					s.logger.Infow("repairing unexpected eof", "segment", seg, "offset", offset)
+					if err := s.repairFrom(i, offset); err != nil {
+						s.logger.Errorw("repair failed", "error", err)
+						return 0, err
+					}
+					s.logger.Infow("repair complete", "active segment", s.active)
+					return last, nil
+				}
+				return 0, err
 			}
+
+			if err := idx.Set(entry.Index, &indexEntry{
+				Segment: uint16(seg.n),
+				Offset:  uint32(offset),
+			}); err != nil {
+				return 0, err
+			}
+			last = entry.Index
+		}
+	}
+	return last, nil
+}
+
+func (s *segments) repairFrom(segPos int, offset int64) error {
+	for i, seg := range s.list[segPos+1:] {
+		if err := seg.delete(); err != nil {
 			return err
 		}
+		s.list[i] = nil
+	}
+	s.active = s.list[segPos]
+	s.list = s.list[:segPos+1]
+	if err := s.active.truncate(offset); err != nil {
+		return err
+	}
+	if err := s.active.sync(); err != nil {
+		return err
+	}
+	// need to flush deleted inodes in case we actually removed files
+	if err := s.dir.Sync(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -110,6 +110,7 @@ func New(opts ...Option) (*Storage, error) {
 			return nil, err
 		}
 	}
+
 	if st.conf.maxSegmentSize > maxSegmentSize {
 		return nil, fmt.Errorf("segment size can't be larger then %v", maxSegmentSize)
 	}
@@ -132,17 +133,11 @@ func New(opts ...Option) (*Storage, error) {
 	}
 	st.idx = idx
 
-	e1 := st.segs.scan(func(n int, offset int64, entry *types.Entry) bool {
-		st.lastIndex = entry.Index
-		return st.idx.Set(entry.Index, &indexEntry{
-			Segment: uint16(n),
-			Offset:  uint32(offset),
-		}) == nil
-	})
-	if e1 != nil {
-		return nil, e1
+	st.lastIndex, err = st.segs.rescan(idx)
+	if err != nil {
+		return nil, err
 	}
-	return st, err
+	return st, nil
 }
 
 type Storage struct {

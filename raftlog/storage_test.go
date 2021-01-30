@@ -64,7 +64,7 @@ func TestStorageRescan(t *testing.T) {
 
 	for i := 1; i <= total; i++ {
 		entry, err := store.Get(uint64(i))
-		require.NoError(t, err)
+		require.NoError(t, err, "entry num %d", i)
 		require.Equal(t, i, int(entry.Index))
 	}
 }

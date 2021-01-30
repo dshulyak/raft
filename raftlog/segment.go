@@ -3,7 +3,6 @@ package raftlog
 import (
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 
 	"github.com/dshulyak/raft/types"
@@ -100,34 +99,20 @@ func (s *segment) get(offset uint32) (*types.Entry, error) {
 	return s.log.Get(offset)
 }
 
-func (s *segment) scan(f func(int, int64, *types.Entry) bool) error {
-	scanner := s.log.scanner(0)
-	defer scanner.close()
-	for {
-		offset := scanner.offset
-		entry, err := scanner.next()
+func (s *segment) truncate(offset int64) error {
+	s.state &= ^(segmentUpdated)
+	return s.log.truncate(offset)
+}
 
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			// TODO unexpected EOF
-			return err
-		}
-		if !f(s.n, offset, entry) {
-			return ScanCanceled
-		}
-	}
+func (s *segment) scanner(offset uint32) *scanner {
+	return s.log.scanner(offset)
 }
 
 func (s *segment) sync() error {
-	if !s.isUpdated() {
-		return nil
-	}
 	if err := s.log.Sync(); err != nil {
 		return err
 	}
-	s.state ^= segmentUpdated
+	s.state &= ^(segmentUpdated)
 	return nil
 }
 
@@ -136,5 +121,9 @@ func (s *segment) close() error {
 }
 
 func (s *segment) delete() error {
+	s.logger.Debugw("deleting segment", "segment", s)
+	if err := s.close(); err != nil {
+		return err
+	}
 	return s.log.Delete()
 }

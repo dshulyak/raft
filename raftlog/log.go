@@ -63,6 +63,7 @@ func (l *log) openAt(file string) error {
 	if err := unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_SEQUENTIAL); err != nil {
 		return err
 	}
+
 	l.f = f
 	l.logger.Debugw("opened log file", "path", file)
 	l.w = bufio.NewWriter(f)
@@ -141,6 +142,10 @@ func (l *log) Size() (int64, error) {
 		return 0, err
 	}
 	return stat.Size(), nil
+}
+
+func (l *log) truncate(offset int64) error {
+	return l.f.Truncate(offset)
 }
 
 func (l *log) scanner(offset uint32) *scanner {
