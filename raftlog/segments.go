@@ -107,7 +107,7 @@ func (s *segments) rescan(idx *index) (uint64, error) {
 					break
 				}
 				if errors.Is(err, io.ErrUnexpectedEOF) {
-					s.logger.Infow("repairing unexpected eof", "segment", seg, "offset", offset)
+					s.logger.Infow("repairing unexpected eof", "segment", seg, "offset", offset, "error", err)
 					if err := s.repairFrom(i, offset); err != nil {
 						s.logger.Errorw("repair failed", "error", err)
 						return 0, err

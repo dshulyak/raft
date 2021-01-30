@@ -33,7 +33,7 @@ func makeTestStorage(t testing.TB, opts ...Option) *Storage {
 	opts = append([]Option{WithLogger(testLogger(t)), WithTempDir()}, opts...)
 	store, err := New(opts...)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.Delete()) })
+	t.Cleanup(func() { store.Delete() })
 	return store
 }
 
@@ -48,7 +48,7 @@ func TestStorageRescan(t *testing.T) {
 	opts := []Option{WithSegmentSize(512), WithCache(2)}
 	store := makeTestStorage(t, opts...)
 
-	total := 1
+	total := 200
 	for i := 1; i <= total; i++ {
 		require.NoError(t, store.Append(&types.Entry{Index: uint64(i)}))
 	}
@@ -56,10 +56,7 @@ func TestStorageRescan(t *testing.T) {
 	require.NoError(t, store.Sync())
 	require.NoError(t, store.Close())
 
-	opts = append(opts, WithLogger(testLogger(t)), WithDir(store.Location()))
-	store, err := New(opts...)
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
+	store = makeTestStorage(t, WithDir(store.Location()))
 
 	for i := 1; i <= total; i++ {
 		entry, err := store.Get(uint64(i))
@@ -87,8 +84,8 @@ func TestStorageRewrite(t *testing.T) {
 	for i := 1; i <= total; i++ {
 		entry, err := store.Get(uint64(i))
 		require.NoError(t, err)
-		require.Equal(t, i, int(entry.Index))
-		require.Equal(t, terms, int(entry.Term))
+		require.Equal(t, i, int(entry.Index), "index")
+		require.Equal(t, terms, int(entry.Term), "term")
 	}
 }
 

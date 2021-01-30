@@ -215,6 +215,9 @@ func (s *Storage) Append(entry *types.Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if entry.Index < s.lastIndex {
+		s.flushed = entry.Index - 1
+	}
 	s.lastIndex = entry.Index
 
 	s.cache.Add(entry)

@@ -48,9 +48,8 @@ func (e *entriesCache) IterateFrom(start uint64, f func(*types.Entry) bool) {
 }
 
 func (e *entriesCache) Add(entry *types.Entry) {
-	if entry.Index <= e.tail && entry.Index >= e.head {
-		e.ring[entry.Index%e.Capacity()] = entry
-		return
+	if entry.Index <= e.tail {
+		e.tail = entry.Index - 1
 	}
 
 	pos := e.tail % e.Capacity()

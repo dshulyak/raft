@@ -167,9 +167,6 @@ func readEntry(r io.Reader, entry *types.Entry) (int, error) {
 
 	n, err := io.ReadFull(r, meta)
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return n, io.ErrUnexpectedEOF
-		}
 		return n, err
 	}
 
@@ -184,9 +181,6 @@ func readEntry(r io.Reader, entry *types.Entry) (int, error) {
 
 	n, err = io.ReadFull(r, payload)
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return total + n, io.ErrUnexpectedEOF
-		}
 		return total + n, err
 	}
 
