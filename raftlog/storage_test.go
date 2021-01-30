@@ -48,7 +48,7 @@ func TestStorageRescan(t *testing.T) {
 	opts := []Option{WithSegmentSize(512), WithCache(2)}
 	store := makeTestStorage(t, opts...)
 
-	total := 200
+	total := 1
 	for i := 1; i <= total; i++ {
 		require.NoError(t, store.Append(&types.Entry{Index: uint64(i)}))
 	}

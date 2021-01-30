@@ -2,6 +2,7 @@ package raftlog
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,10 @@ var (
 	ErrLogCorrupted = errors.New("log is corrupted")
 )
 
+const (
+	lenFieldSize = 4 // uint32
+)
+
 var (
 	readerPool = sync.Pool{
 		New: func() interface{} {
@@ -31,7 +36,7 @@ var (
 
 func onDiskSize(entry *types.Entry) int {
 	size := entry.Size()
-	return uvarintSize(uint64(size)) + size + crcSize
+	return lenFieldSize + size + crcSize*2
 }
 
 func openLog(logger *zap.SugaredLogger, file string) (*log, error) {
@@ -71,30 +76,33 @@ func (l *log) openAt(file string) error {
 }
 
 func (l *log) Append(entry *types.Entry) (int, error) {
-	size := entry.Size() + crcSize
+	size := entry.Size()
+	offset := 0
 
-	total := 0
-	n, err := writeUvarint(l.w, uint64(size))
+	buf := make([]byte, onDiskSize(entry))
+	binary.BigEndian.PutUint32(buf, uint32(size))
+	offset += lenFieldSize
+
+	putCrc32(buf[offset:], buf[:offset])
+	offset += crcSize
+
+	w, err := entry.MarshalTo(buf[offset:])
 	if err != nil {
 		return 0, err
 	}
-	total += n
+	offset += w
 
-	buf := make([]byte, size)
-	if _, err := entry.MarshalTo(buf[crcSize:]); err != nil {
-		return 0, err
-	}
-	putCrc32(buf, buf[crcSize:])
+	putCrc32(buf[offset:], buf[offset-w:offset])
+	offset += crcSize
 
-	n, err = l.w.Write(buf)
+	n, err := l.w.Write(buf)
 	if err != nil {
 		return n, err
 	}
-	if n != size {
+	if n != offset {
 		return n, io.ErrShortWrite
 	}
-	total += n
-	return total, nil
+	return n, nil
 }
 
 func (l *log) Get(offset uint32) (*types.Entry, error) {
@@ -154,35 +162,42 @@ func (l *log) scanner(offset uint32) *scanner {
 	return &scanner{r: r}
 }
 
-func readEntry(r *bufio.Reader, entry *types.Entry) (int, error) {
-	size, n, err := readUvarint(r)
+func readEntry(r io.Reader, entry *types.Entry) (int, error) {
+	meta := make([]byte, lenFieldSize+crcSize)
+
+	n, err := io.ReadFull(r, meta)
 	if err != nil {
-		if n > 0 && errors.Is(err, io.EOF) {
-			return 0, io.ErrUnexpectedEOF
+		if errors.Is(err, io.EOF) {
+			return n, io.ErrUnexpectedEOF
 		}
-		return 0, err
+		return n, err
 	}
+
 	total := n
 
-	buf := make([]byte, size)
+	if !cmpCrc32(meta[lenFieldSize:], meta[:lenFieldSize]) {
+		return total, ErrLogCorrupted
+	}
 
-	n, err = io.ReadFull(r, buf)
+	size := binary.BigEndian.Uint32(meta[:lenFieldSize])
+	payload := make([]byte, size+crcSize)
+
+	n, err = io.ReadFull(r, payload)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return total + n, io.ErrUnexpectedEOF
-		} else {
-			return 0, err
 		}
+		return total + n, err
 	}
 
 	total += n
 
-	if !cmpCrc32(buf, buf[crcSize:]) {
-		return 0, ErrLogCorrupted
+	if !cmpCrc32(payload[size:], payload[:size]) {
+		return total, ErrLogCorrupted
 	}
 
-	if err := entry.Unmarshal(buf[crcSize:]); err != nil {
-		return 0, err
+	if err := entry.Unmarshal(payload[:size]); err != nil {
+		return total, err
 	}
 	return total, nil
 }
