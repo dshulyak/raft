@@ -38,6 +38,7 @@ func NewDurableState(f *os.File) (*DurableState, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: can't open dir %s", err, dir.Name())
 		}
+		defer dir.Close()
 		if err := dir.Sync(); err != nil {
 			return nil, fmt.Errorf("%w: can't sync dir %s", err, dir.Name())
 		}
