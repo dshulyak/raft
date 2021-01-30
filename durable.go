@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
+	"path/filepath"
 
 	"github.com/tysonmote/gommap"
 )
@@ -28,8 +29,25 @@ var (
 )
 
 func NewDurableState(f *os.File) (*DurableState, error) {
-	if err := f.Truncate(int64(stateWidth)); err != nil {
-		return nil, fmt.Errorf("failed to truncate %v: %w", f.Name(), err)
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if stat.Size() == 0 {
+		dir, err := os.OpenFile(filepath.Dir(f.Name()), 0, os.ModeDir)
+		if err != nil {
+			return nil, fmt.Errorf("%w: can't open dir %s", err, dir.Name())
+		}
+		if err := dir.Sync(); err != nil {
+			return nil, fmt.Errorf("%w: can't sync dir %s", err, dir.Name())
+		}
+
+		if err := f.Truncate(int64(stateWidth)); err != nil {
+			return nil, fmt.Errorf("%w: failed to truncate %s", err, f.Name())
+		}
+		if err := f.Sync(); err != nil {
+			return nil, fmt.Errorf("%w: can't sync durable state file %s", err, f.Name())
+		}
 	}
 	mmap, err := gommap.Map(f.Fd(),
 		gommap.PROT_READ|gommap.PROT_WRITE,
