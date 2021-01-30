@@ -26,13 +26,8 @@ func newReplicationState(
 // main raft state machine.
 // for example finding out correct log offset doesn't require serialized access
 // to the state maintained by the main raft state machine.
-// reading bext batch of entries to replicate doesn't require access to the
+// reading next batch of entries to replicate doesn't require access to the
 // state maintained by raft state machine as well.
-//
-// AppendEntriesResponse's must be sent to the main state machine anyway
-// for updating commited index log and some other features (CheckQuorum)
-// but reading from log can be done in parallel, it might be especially
-// meaningfull
 type replicationState struct {
 	logger *zap.SugaredLogger
 	id     NodeID
