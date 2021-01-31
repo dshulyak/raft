@@ -86,6 +86,8 @@ func (l *log) Append(entry *types.Entry) (int, error) {
 	size := entry.Size()
 	offset := 0
 
+	// why crc for size? see reader
+
 	buf := make([]byte, onDiskSize(entry))
 	binary.BigEndian.PutUint32(buf, uint32(size))
 	offset += lenFieldSize
@@ -178,6 +180,10 @@ func readEntry(r io.Reader, entry *types.Entry) (int, error) {
 	}
 
 	total := n
+
+	// if lenField bytes are corrupted it will result in io.ErrUnexpectedEOF
+	// that is handled by truncating log at the valid offset during recovery.
+	// however this is definitely should be ErrLogCorrupted, which is non-recoverable
 
 	if !cmpCrc32(meta[lenFieldSize:], meta[:lenFieldSize]) {
 		return total, ErrLogCorrupted
