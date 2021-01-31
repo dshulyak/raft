@@ -184,6 +184,11 @@ func readEntry(r io.Reader, entry *types.Entry) (int, error) {
 	// if lenField bytes are corrupted it will result in io.ErrUnexpectedEOF
 	// that is handled by truncating log at the valid offset during recovery.
 	// however this is definitely should be ErrLogCorrupted, which is non-recoverable
+	//
+	// another way to deal with it is to ensure that read payload never returns io.EOF unless
+	// size is larger then the max entry size. in that case we can fail early if size got corrupted
+	// beyond largest possible, or fail after computing crc.
+	// for the above method to work file must be zero filled (currently only disk space is allocated)
 
 	if !cmpCrc32(meta[lenFieldSize:], meta[:lenFieldSize]) {
 		return total, ErrLogCorrupted
