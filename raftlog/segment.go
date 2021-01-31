@@ -29,7 +29,7 @@ func openSegment(logger *zap.SugaredLogger, conf config, n int) (*segment, error
 		maxSize: conf.maxSegmentSize,
 	}
 	var err error
-	seg.log, err = openLog(logger, segmentPath(conf.dataDir, n))
+	seg.log, err = openLog(logger, segmentPath(conf.dataDir, n), int64(conf.maxSegmentSize))
 	if err != nil {
 		return nil, err
 	}

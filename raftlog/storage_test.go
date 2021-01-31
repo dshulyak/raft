@@ -213,3 +213,23 @@ func TestStorageProperties(t *testing.T) {
 	}
 	rapid.Check(t, rapid.Run(new(storageMachine)))
 }
+
+
+func BenchmarkStorageAppend(b *testing.B) {
+	store := makeTestStorage(b)
+	entry := types.Entry{Index: 1, Op: make([]byte, 100)}
+	
+	b.SetBytes(int64(onDiskSize(&entry)))
+	
+	b.ResetTimer()
+	
+	for i := 1; i <= b.N; i++ {
+		e := entry
+		e.Index = uint64(i)
+		if err := store.Append(&e); err != nil {
+			require.NoError(b, err)
+		}
+	}
+
+
+}

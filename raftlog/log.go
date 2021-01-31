@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"syscall"
 
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
@@ -39,9 +40,9 @@ func onDiskSize(entry *types.Entry) int {
 	return lenFieldSize + size + crcSize*2
 }
 
-func openLog(logger *zap.SugaredLogger, file string) (*log, error) {
+func openLog(logger *zap.SugaredLogger, file string, size int64) (*log, error) {
 	l := &log{logger: logger}
-	if err := l.openAt(file); err != nil {
+	if err := l.openAt(file, size); err != nil {
 		return nil, err
 	}
 	return l, nil
@@ -60,12 +61,18 @@ type log struct {
 	w logWriter
 }
 
-func (l *log) openAt(file string) error {
+func (l *log) openAt(file string, size int64) error {
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	if err := unix.Fadvise(int(f.Fd()), 0, 0, unix.FADV_SEQUENTIAL); err != nil {
+		return err
+	}
+
+	// syscall.Fallocate is not portable.
+	// posix_fallocate doesn't support unix.FALLOC_FL_KEEP_SIZE and will fail if called on a file opened with O_APPEND
+	if err := syscall.Fallocate(int(f.Fd()), unix.FALLOC_FL_KEEP_SIZE, 0, size); err != nil {
 		return err
 	}
 
