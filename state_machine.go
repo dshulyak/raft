@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/state"
 	"github.com/dshulyak/raft/types"
+
 	"go.uber.org/zap"
 )
 
@@ -76,7 +78,7 @@ type Update struct {
 	Commit      uint64
 }
 
-type state struct {
+type raftState struct {
 	ctx    context.Context
 	logger *zap.SugaredLogger
 
@@ -93,23 +95,25 @@ type state struct {
 	nodes         map[NodeID]*ConfNode
 	configuration *Configuration
 
-	*DurableState
+	state.State
+	stateStore *state.Store
+
 	log *raftlog.Storage
 
 	commitIndex uint64
 }
 
-func (s *state) majority() int {
+func (s *raftState) majority() int {
 	return len(s.configuration.Nodes)/2 + 1
 }
 
-func (s *state) must(err error, msg string) {
+func (s *raftState) must(err error, msg string) {
 	if err != nil {
 		s.logger.Panicw(msg, "error", err)
 	}
 }
 
-func (s *state) commit(u *Update, commited uint64) {
+func (s *raftState) commit(u *Update, commited uint64) {
 	if commited <= s.commitIndex {
 		return
 	}
@@ -119,7 +123,7 @@ func (s *state) commit(u *Update, commited uint64) {
 	u.Updated = true
 }
 
-func (s *state) cmpLogs(term, index uint64) int {
+func (s *raftState) cmpLogs(term, index uint64) int {
 	if s.log.IsEmpty() {
 		if term == 0 && index == 0 {
 			return 0
@@ -141,7 +145,7 @@ func (s *state) cmpLogs(term, index uint64) int {
 	return 0
 }
 
-func (s *state) send(u *Update, msg interface{}, to ...NodeID) {
+func (s *raftState) send(u *Update, msg interface{}, to ...NodeID) {
 	if len(to) == 0 {
 		for i := range s.configuration.Nodes {
 			id := s.configuration.Nodes[i].ID
@@ -157,7 +161,7 @@ func (s *state) send(u *Update, msg interface{}, to ...NodeID) {
 	u.Updated = true
 }
 
-func (s *state) resetElectionTimeout() {
+func (s *raftState) resetElectionTimeout() {
 	// jitter = [1, maxElection-minElection]
 	jitter := s.rng.Intn(1 + s.maxElection - s.minElection)
 	if jitter == 0 {
@@ -179,7 +183,7 @@ func newStateMachine(
 	minTicks, maxTicks int,
 	conf *Configuration,
 	log *raftlog.Storage,
-	ds *DurableState,
+	stateStore *state.Store,
 ) *stateMachine {
 	update := &Update{}
 	nodes := map[NodeID]*ConfNode{}
@@ -190,9 +194,9 @@ func newStateMachine(
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &stateMachine{
 		update: update,
-		role: toFollower(&state{
+		role: toFollower(&raftState{
 			rng:           rng,
-			DurableState:  ds,
+			stateStore:    stateStore,
 			logger:        logger.With(zap.Uint64("ID", uint64(id))).Sugar(),
 			minElection:   minTicks,
 			maxElection:   maxTicks,
@@ -256,14 +260,14 @@ func (s *stateMachine) Update() *Update {
 	return u
 }
 
-func toFollower(s *state, term uint64, u *Update) *follower {
-	f := &follower{state: s}
+func toFollower(s *raftState, term uint64, u *Update) *follower {
+	f := &follower{raftState: s}
 	f.resetElectionTimeout()
 	f.leader = None
 	if term > s.Term {
 		f.Term = term
 		f.VotedFor = None
-		f.must(f.Sync(), "failed to sync durable state")
+		f.must(f.stateStore.Save(&s.State), "failed to sync durable state")
 	}
 
 	u.State = RaftFollower
@@ -273,7 +277,7 @@ func toFollower(s *state, term uint64, u *Update) *follower {
 }
 
 type follower struct {
-	*state
+	*raftState
 
 	// linkTimeout is equal to the min election timeout.
 	// if RequestVote is received before min election timeout has passed it will be rejected.
@@ -300,7 +304,7 @@ func (f *follower) tick(n int, u *Update) role {
 		f.logger.Debugw("election timeout elapsed. transitioning to candidate",
 			"id", f.id,
 		)
-		return toCandidate(f.state, u)
+		return toCandidate(f.raftState, u)
 	}
 	if IsPreVoteEnabled(f.features) {
 		f.linkTimeout -= n
@@ -336,7 +340,7 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	} else if f.Term < msg.Term {
 		f.Term = msg.Term
 		f.VotedFor = None
-		f.must(f.Sync(), "failed to sync durable state")
+		f.must(f.stateStore.Save(&f.State), "failed to sync durable state")
 	}
 	if f.leader != msg.Leader {
 		f.leader = msg.Leader
@@ -453,7 +457,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		}
 	}
 	if sync {
-		f.must(f.Sync(), "failed to sync durable state")
+		f.must(f.stateStore.Save(&f.State), "failed to sync durable state")
 	}
 	if grant {
 		// do we reset timer if it is a pre-vote?
@@ -476,17 +480,17 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	return nil
 }
 
-func toCandidate(s *state, u *Update) *candidate {
+func toCandidate(s *raftState, u *Update) *candidate {
 	c := candidate{
-		state: s,
-		votes: map[NodeID]struct{}{},
+		raftState: s,
+		votes:     map[NodeID]struct{}{},
 	}
 	c.campaign(IsPreVoteEnabled(c.features), u)
 	return &c
 }
 
 type candidate struct {
-	*state
+	*raftState
 	preVote bool
 	votes   map[NodeID]struct{}
 }
@@ -501,7 +505,7 @@ func (c *candidate) campaign(preVote bool, u *Update) {
 	if !c.preVote {
 		c.Term++
 		c.VotedFor = c.id
-		c.must(c.Sync(), "failed to sync durable state")
+		c.must(c.stateStore.Save(&c.State), "failed to sync durable state")
 	}
 
 	c.resetElectionTimeout()
@@ -542,7 +546,7 @@ func (c *candidate) tick(n int, u *Update) role {
 		c.logger.Debugw("election timeout elapsed. transitioning to candidate",
 			"id", c.id,
 		)
-		return toCandidate(c.state, u)
+		return toCandidate(c.raftState, u)
 	}
 	return nil
 }
@@ -551,7 +555,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 	switch m := msg.(type) {
 	case *RequestVote:
 		if m.Term > c.Term {
-			return toFollower(c.state, m.Term, u)
+			return toFollower(c.raftState, m.Term, u)
 		}
 		var grant bool
 		if m.Term == c.Term && m.PreVote {
@@ -570,7 +574,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 	case *AppendEntries:
 		// leader might have been elected in the same term as the candidate
 		if m.Term >= c.Term {
-			return toFollower(c.state, m.Term, u)
+			return toFollower(c.raftState, m.Term, u)
 		}
 		c.send(u, &AppendEntriesResponse{
 			Follower: c.id,
@@ -581,7 +585,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 			return nil
 		}
 		if m.Term > c.Term {
-			return toFollower(c.state, m.Term, u)
+			return toFollower(c.raftState, m.Term, u)
 		}
 		if !m.VoteGranted {
 			return nil
@@ -598,7 +602,7 @@ func (c *candidate) next(msg interface{}, u *Update) role {
 			c.campaign(false, u)
 			return nil
 		}
-		return toLeader(c.state, u)
+		return toLeader(c.raftState, u)
 	case []*request:
 		c.logger.Panicw("proposals can't be sent while leader is not elected")
 	}
@@ -614,10 +618,10 @@ type readReq struct {
 	readIndex uint64
 }
 
-func toLeader(s *state, u *Update) *leader {
+func toLeader(s *raftState, u *Update) *leader {
 	s.logger.Debugw("leader is elected", "id", s.id, "term", s.Term)
 	l := leader{
-		state:              s,
+		raftState:          s,
 		matchIndex:         newMatch(len(s.configuration.Nodes)),
 		checkQuorumTimeout: s.minElection,
 		checkQuorum:        map[NodeID]struct{}{},
@@ -647,7 +651,7 @@ func toLeader(s *state, u *Update) *leader {
 }
 
 type leader struct {
-	*state
+	*raftState
 	// recentlyCommited is true if leader commited in this term.
 	recentlyCommited bool
 	nextLogIndex     uint64
@@ -772,7 +776,7 @@ func (l *leader) notifyPending(err error) {
 
 func (l *leader) stepdown(term uint64, u *Update) *follower {
 	l.notifyPending(ErrLeaderStepdown)
-	return toFollower(l.state, term, u)
+	return toFollower(l.raftState, term, u)
 }
 
 func (l *leader) commitInflight(u *Update, idx uint64) {

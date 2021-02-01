@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/state"
 	"github.com/dshulyak/raft/transport/channel"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -79,19 +80,19 @@ func newNodeCluster(t TestingHelper, n int) *nodeCluster {
 		nc.apps[c.ID] = app
 		c.App = app
 		c.Logger = logger.Named(fmt.Sprintf("node=%d", i))
-		c.Storage, err = raftlog.New(raftlog.WithLogger(logger), raftlog.WithTempDir())
+		c.LogStore, err = raftlog.New(raftlog.WithLogger(logger), raftlog.WithTempDir())
 		require.NoError(t, err)
 		t.Cleanup(func() {
-			c.Storage.Delete()
+			c.LogStore.Delete()
 		})
 		f, err := ioutil.TempFile("", "raft-node-test")
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			os.Remove(f.Name())
 		})
-		c.State, err = NewDurableState(f)
+		c.StateStore, err = state.NewStore(f)
 		t.Cleanup(func() {
-			c.State.Close()
+			c.StateStore.Close()
 		})
 		n := NewNode(&c)
 		nc.nodes[c.ID] = n

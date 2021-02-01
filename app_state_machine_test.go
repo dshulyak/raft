@@ -103,9 +103,9 @@ func TestApplyLogs(t *testing.T) {
 	})
 	app := newKeyValueApp()
 	global := &Config{
-		Storage: storage,
-		App:     app,
-		Logger:  logger,
+		LogStore: storage,
+		App:      app,
+		Logger:   logger,
 	}
 	group, ctx := errgroup.WithContext(context.Background())
 	appSM := newAppStateMachine(ctx, global, group)

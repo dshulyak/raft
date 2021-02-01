@@ -128,7 +128,7 @@ func (m *peerMailbox) Update(global *Config, state RaftState) {
 				logger,
 				uint64(global.EntriesPerAppend),
 				global.HeartbeatTimeout,
-				global.Storage,
+				global.LogStore,
 			),
 		)
 		m.group.Go(m.current.Run)

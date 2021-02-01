@@ -1,4 +1,4 @@
-package raft
+package state
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/dshulyak/raft/types"
 	"github.com/tysonmote/gommap"
 )
 
@@ -28,7 +29,7 @@ var (
 	empty = [stateWidth]byte{}
 )
 
-func NewDurableState(f *os.File) (*DurableState, error) {
+func NewStore(f *os.File) (*Store, error) {
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -56,31 +57,31 @@ func NewDurableState(f *os.File) (*DurableState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to mmap %v: %w", f.Name(), err)
 	}
-	ds := &DurableState{mmap: mmap}
-	return ds, ds.Load()
+	return &Store{mmap: mmap}, nil
 }
 
-type DurableState struct {
+type State struct {
 	Term     uint64
-	VotedFor NodeID
+	VotedFor types.NodeID
+}
 
-	// serialize to buf first and copy to mmap to avoid incomplete writes
+type Store struct {
 	buf [stateWidth]byte
 
 	mmap gommap.MMap
 }
 
-func (ds *DurableState) Sync() error {
+func (ds *Store) Save(state *State) error {
 	buf := ds.buf[:]
-	binary.LittleEndian.PutUint64(buf[crcWidth:], ds.Term)
-	binary.LittleEndian.PutUint64(buf[crcWidth+termWidth:], uint64(ds.VotedFor))
+	binary.LittleEndian.PutUint64(buf[crcWidth:], state.Term)
+	binary.LittleEndian.PutUint64(buf[crcWidth+termWidth:], uint64(state.VotedFor))
 	code := crc32.Update(0, table, buf[crcWidth:])
 	binary.LittleEndian.PutUint32(buf, code)
 	_ = copy(ds.mmap, buf)
 	return ds.mmap.Sync(gommap.MS_SYNC)
 }
 
-func (ds *DurableState) Load() error {
+func (ds *Store) Load(state *State) error {
 	buf := ds.buf[:]
 	copy(buf, ds.mmap)
 	if bytes.Compare(buf, empty[:]) == 0 {
@@ -91,12 +92,12 @@ func (ds *DurableState) Load() error {
 	if code != crc32.Update(0, table, buf[crcWidth:]) {
 		return ErrStateCorrupted
 	}
-	ds.Term = binary.LittleEndian.Uint64(buf[crcWidth:])
-	ds.VotedFor = NodeID(binary.LittleEndian.Uint64(buf[crcWidth+termWidth:]))
+
+	state.Term = binary.LittleEndian.Uint64(buf[crcWidth:])
+	state.VotedFor = types.NodeID(binary.LittleEndian.Uint64(buf[crcWidth+termWidth:]))
 	return nil
 }
 
-func (ds *DurableState) Close() error {
-	_ = ds.Sync()
+func (ds *Store) Close() error {
 	return ds.mmap.UnsafeUnmap()
 }

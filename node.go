@@ -101,8 +101,8 @@ func NewNode(conf *Config) *Node {
 		conf.FeatureFlags,
 		conf.ElectionTimeoutMin, conf.ElectionTimeoutMax,
 		conf.Configuration,
-		conf.Storage,
-		conf.State,
+		conf.LogStore,
+		conf.StateStore,
 	)
 	n.app = newAppStateMachine(ctx, conf, n.group)
 	n.streams = newStreamHandler(ctx, conf.Logger, n.msgPipeline)

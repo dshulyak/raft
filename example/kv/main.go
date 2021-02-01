@@ -129,8 +129,8 @@ func main() {
 	rnode := raft.NewNode(&conf)
 	group.Go(func() error {
 		err := rnode.Wait()
-		conf.Storage.Close()
-		conf.State.Close()
+		conf.LogStore.Close()
+		conf.StateStore.Close()
 		return err
 	})
 

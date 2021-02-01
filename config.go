@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/state"
 	"github.com/dshulyak/raft/transport"
 	"github.com/dshulyak/raft/types"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -50,7 +52,7 @@ func WithStorageAt(dirPath string) ConfigOption {
 		if err != nil {
 			return err
 		}
-		conf.Storage = storage
+		conf.LogStore = storage
 		return nil
 	}
 }
@@ -63,11 +65,11 @@ func WithStateAt(dirPath string) ConfigOption {
 		if err != nil {
 			return err
 		}
-		state, err := NewDurableState(f)
+		st, err := state.NewStore(f)
 		if err != nil {
 			return err
 		}
-		conf.State = state
+		conf.StateStore = st
 		return nil
 	}
 }
@@ -118,8 +120,8 @@ type Config struct {
 	// TODO if limit is reached node should stop accepting proposals.
 	PendingProposalsBuffer int
 
-	Storage *raftlog.Storage
-	State   *DurableState
+	LogStore   *raftlog.Storage
+	StateStore *state.Store
 
 	Logger *zap.Logger
 

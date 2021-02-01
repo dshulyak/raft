@@ -21,7 +21,7 @@ func newAppStateMachine(ctx context.Context, global *Config, group *errgroup.Gro
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   global.Logger.Sugar(),
-		log:      global.Storage,
+		log:      global.LogStore,
 		app:      global.App,
 		appliedC: make(chan uint64),
 		updatesC: make(chan *appUpdate),

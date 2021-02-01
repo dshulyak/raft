@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/raft/raftlog"
+	"github.com/dshulyak/raft/state"
 	"github.com/dshulyak/raft/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +64,7 @@ func getTestCluster(t TestingHelper, opts ...testClusterOp) *testCluster {
 		maxTicks:      10,
 		configuration: configuration,
 		logs:          map[NodeID]*raftlog.Storage{},
-		ds:            map[NodeID]*DurableState{},
+		ds:            map[NodeID]*state.Store{},
 		states:        map[NodeID]*stateMachine{},
 		blockedRoutes: map[NodeID]map[NodeID]struct{}{},
 	}
@@ -81,7 +82,7 @@ func getTestCluster(t TestingHelper, opts ...testClusterOp) *testCluster {
 			os.Remove(f.Name())
 		})
 
-		ds, err := NewDurableState(f)
+		ds, err := state.NewStore(f)
 		require.NoError(t, err)
 		cluster.ds[node.ID] = ds
 		t.Cleanup(func() {
@@ -109,7 +110,7 @@ type testCluster struct {
 	configuration      *Configuration
 
 	logs map[NodeID]*raftlog.Storage
-	ds   map[NodeID]*DurableState
+	ds   map[NodeID]*state.Store
 
 	states        map[NodeID]*stateMachine
 	messages      []interface{}
