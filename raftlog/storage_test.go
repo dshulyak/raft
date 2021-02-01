@@ -122,7 +122,7 @@ func TestStorageRepair(t *testing.T) {
 			Op:    make([]byte, 10),
 		}
 		if i <= valid {
-			offset += onDiskSize(entry)
+			offset += onDiskSize(entry.Size())
 		}
 		require.NoError(t, store.Append(entry))
 	}
@@ -219,7 +219,7 @@ func BenchmarkStorageAppend(b *testing.B) {
 	store := makeTestStorage(b)
 	entry := types.Entry{Index: 1, Op: make([]byte, 100)}
 	
-	b.SetBytes(int64(onDiskSize(&entry)))
+	b.SetBytes(int64(onDiskSize(entry.Size())))
 	
 	b.ResetTimer()
 	

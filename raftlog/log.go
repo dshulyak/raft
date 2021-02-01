@@ -35,13 +35,12 @@ var (
 	}
 )
 
-func onDiskSize(entry *types.Entry) int {
-	size := entry.Size()
+func onDiskSize(size int) int {
 	return lenFieldSize + size + crcSize*2
 }
 
 func openLog(logger *zap.SugaredLogger, file string, size int64) (*log, error) {
-	l := &log{logger: logger}
+	l := &log{logger: logger, encBuf: make([]byte, 128<<10 /* 128kb */)}
 	if err := l.openAt(file, size); err != nil {
 		return nil, err
 	}
@@ -59,6 +58,9 @@ type log struct {
 
 	f *os.File
 	w logWriter
+
+	// buffer used for encoding entries
+	encBuf []byte
 }
 
 func (l *log) openAt(file string, size int64) error {
@@ -83,15 +85,23 @@ func (l *log) openAt(file string, size int64) error {
 }
 
 func (l *log) Append(entry *types.Entry) (int, error) {
-	size := entry.Size()
-	offset := 0
+	var (
+		size     = entry.Size()
+		offset   = 0
+		diskSize = onDiskSize(size)
+		buf      []byte
+	)
 
-	// why crc for size? see reader
+	if diskSize <= len(l.encBuf) {
+		buf = l.encBuf[:diskSize]
+	} else {
+		buf = make([]byte, diskSize)
+	}
 
-	buf := make([]byte, onDiskSize(entry))
 	binary.BigEndian.PutUint32(buf, uint32(size))
 	offset += lenFieldSize
 
+	// why crc for size? see reader
 	putCrc32(buf[offset:], buf[:offset])
 	offset += crcSize
 

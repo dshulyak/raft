@@ -59,7 +59,7 @@ type segment struct {
 }
 
 func (s *segment) hasSpace(entry *types.Entry) bool {
-	return s.size+onDiskSize(entry) <= s.maxSize
+	return s.size+onDiskSize(entry.Size()) <= s.maxSize
 }
 
 func (s *segment) isCreated() bool {
