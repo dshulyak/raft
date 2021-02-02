@@ -107,7 +107,6 @@ func (r *replicationChannel) Run() (err error) {
 				}
 			}
 		case out <- next:
-			r.logger.Debugw("sent a message", "msg", next)
 			next = r.peer.next()
 		}
 	}

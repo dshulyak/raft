@@ -51,6 +51,9 @@ func TestStorageRescan(t *testing.T) {
 	total := 200
 	for i := 1; i <= total; i++ {
 		require.NoError(t, store.Append(&types.Entry{Index: uint64(i)}))
+		last, err := store.Last()
+		require.NoError(t, err)
+		require.Equal(t, i, int(last.Index))
 	}
 
 	require.NoError(t, store.Sync())

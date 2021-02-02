@@ -349,8 +349,10 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	}
 	f.resetElectionTimeout()
 	f.resetLinkTimeout()
-	f.logger.Debugw("append entries", "msg", msg)
-
+	// printing hearbeats is too chatty
+	if len(msg.Entries) > 0 {
+		f.logger.Debugw("append entries", "msg", msg)
+	}
 	empty := f.log.IsEmpty()
 	if empty && msg.PrevLog.Index > 0 {
 		f.send(u, &AppendEntriesResponse{
@@ -886,7 +888,7 @@ func (l *leader) onAppendEntriesResponse(m *AppendEntriesResponse, u *Update) ro
 		// peer replication channel will take care of conflicts
 		return nil
 	}
-	l.logger.Debugw("leader received response", "msg", m)
+
 	l.updateReadIndex(m.Follower, m.ReadIndex, u)
 	if !l.matchIndex.update(m.Follower, m.LastLog.Index) {
 		return nil

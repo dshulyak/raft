@@ -135,7 +135,7 @@ func (p *replicationState) onResponse(m *AppendEntriesResponse) {
 	if m.Term != p.term {
 		return
 	}
-	p.logger.Debugw("replication channel received response", "msg", m)
+
 	if m.Success {
 		p.pipeline = true
 		p.prevLog = m.LastLog
@@ -183,7 +183,6 @@ func (p *replicationState) update(m1, m2 *AppendEntries) *AppendEntries {
 		return nil
 	}
 
-	p.logger.Debugw("update internal state", "current", m1, "updated", m2)
 	p.commitLogIndex = m2.Commited
 	p.readIndex = m2.ReadIndex
 	if len(m2.Entries) > 0 {
