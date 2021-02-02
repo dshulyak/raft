@@ -131,7 +131,7 @@ func (s *raftState) cmpLogs(term, index uint64) int {
 		return -1
 	}
 	last, err := s.log.Last()
-	s.must(err, "failed fetching last log")
+	s.must(err, "can't get last log")
 	if last.Term > term {
 		return 1
 	} else if last.Term < term {
@@ -282,14 +282,10 @@ type follower struct {
 	*raftState
 
 	// linkTimeout is equal to the min election timeout.
-	// if RequestVote is received before min election timeout has passed it will be rejected.
-	// prevents partially connected replica with an upto date log from livelocking a cluster
+	// if RequestVote in PreVote mode is received before min election timeout has passed it will be rejected.
+	// prevents partially connected replica with suficiently new log from livelocking a cluster
 	//
 	// described in 6. Cluster membership changes
-	//
-	// ignored without PreVote mode. without PreVote disconnected replica will
-	// increment local term, and it will make it to ignore hearbeats from the active
-	// leader
 	linkTimeout int
 }
 
@@ -428,17 +424,16 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 	)
 	if msg.Term > f.Term {
 		f.Term = msg.Term
+		// updating to None here is crucial as it invalidates "already voted" condition
 		f.VotedFor = None
 		sync = true
 	}
-	// it is better to ignore the link timeout if candidate collected
-	// enough pre-votes. we probably already incremented the term and
-	// append entries from current leader will be ignored.
-	// so if link timeout was reset after candidate gathered enough pre-votes
-	// it will be faster to switch to a new leader
-	if msg.PreVote && f.linkTimeout > 0 && IsPreVoteEnabled(f.features) {
+	// ignoring link timeout if it is no a pre-vote phase, if next candidate
+	// term is higher then the current leader term it will disrupt current leader
+	// so it is better to switch to a new leader immediatly
+	if msg.PreVote && f.linkTimeout > 0 {
 		grant = false
-		context = "link timeout is not elapsed"
+		context = "link timeout has not elapsed"
 	} else if msg.Term < f.Term {
 		grant = false
 		context = "msg term is less than the local term"
@@ -453,13 +448,14 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		grant = f.cmpLogs(msg.LastLog.Term, msg.LastLog.Index) <= 0
 		context = "log is outdated"
 		if grant {
-			context = "log is newer than the local log"
+			context = "log is sufficiently new"
 			if !msg.PreVote {
 				f.VotedFor = msg.Candidate
 				sync = true
 			}
 		}
 	}
+
 	if sync {
 		f.must(f.stateStore.Save(&f.State), "failed to sync durable state")
 	}
