@@ -192,20 +192,22 @@ func newStateMachine(
 		nodes[node.ID] = node
 	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rstate := &raftState{
+		rng:           rng,
+		stateStore:    stateStore,
+		logger:        logger.With(zap.Uint64("ID", uint64(id))).Sugar(),
+		minElection:   minTicks,
+		maxElection:   maxTicks,
+		id:            id,
+		features:      features,
+		nodes:         nodes,
+		configuration: conf,
+		log:           log,
+	}
+	rstate.must(stateStore.Load(&rstate.State), "failed to load persistent state")
 	return &stateMachine{
 		update: update,
-		role: toFollower(&raftState{
-			rng:           rng,
-			stateStore:    stateStore,
-			logger:        logger.With(zap.Uint64("ID", uint64(id))).Sugar(),
-			minElection:   minTicks,
-			maxElection:   maxTicks,
-			id:            id,
-			features:      features,
-			nodes:         nodes,
-			configuration: conf,
-			log:           log,
-		}, 0, update),
+		role:   toFollower(rstate, 0, update),
 	}
 }
 
