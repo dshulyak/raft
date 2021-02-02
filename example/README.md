@@ -66,14 +66,14 @@ curl -sSL https://mirrors.chaos-mesh.org/v1.1.1/install.sh | bash
 
 ```bash
 # update
-curl -X POST http://0.0.0.0:30001/write/ddd -d "dsdadassdadsa"
+curl -X POST http://0.0.0.0:30001/data/ddd -d "dsdadassdadsa"
 
 # read
-curl http://0.0.0.0:30001/get/ddd
+curl http://0.0.0.0:30001/data/ddd
 
 # curl can be used with -L to redirect to a current leader
 # if leader is unknown application will block until it is elected
 # unless replica is partitioned it won't block for long
 # but better to set an appropriate timeout
-curl -L -m 1 http://0.0.0.0:30001/get/ddd
+curl -L -m 1 http://0.0.0.0:30001/data/ddd
 ```
