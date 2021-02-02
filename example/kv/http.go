@@ -16,8 +16,8 @@ const (
 )
 
 func registerServer(srv *server, router *mux.Router) {
-	router.HandleFunc("/get/{key}", srv.Get).Methods(http.MethodGet)
-	router.HandleFunc("/write/{key}", srv.Write).Methods(http.MethodPost, http.MethodPut)
+	router.HandleFunc("/data/{key}", srv.Get).Methods(http.MethodGet)
+	router.HandleFunc("/data/{key}", srv.Write).Methods(http.MethodPost, http.MethodPut)
 }
 
 type server struct {
