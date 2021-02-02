@@ -1,11 +1,15 @@
 package raftlog
 
 import (
+	"fmt"
+
 	"github.com/dshulyak/raft/types"
 )
 
-func newCache(size int) *entriesCache {
+func newCache(size int, lastIndex uint64) *entriesCache {
 	return &entriesCache{
+		head: lastIndex,
+		tail: lastIndex,
 		ring: make([]*types.Entry, size),
 	}
 }
@@ -36,10 +40,11 @@ func (e *entriesCache) Empty() bool {
 }
 
 func (e *entriesCache) IterateFrom(start uint64, f func(*types.Entry) bool) {
+	start++
 	if start < e.head {
 		start = e.head
 	}
-	for start < e.tail {
+	for start <= e.tail {
 		if !f(e.ring[start%e.Capacity()]) {
 			return
 		}
@@ -47,21 +52,27 @@ func (e *entriesCache) IterateFrom(start uint64, f func(*types.Entry) bool) {
 	}
 }
 
+// Add expects entries to be added in order.
+// Entry from the past is allowed, and it usually means overwrite.
+// Entry from the future, such as there is gap between last entry and a new one
+// is not allowed.
 func (e *entriesCache) Add(entry *types.Entry) {
-	if entry.Index <= e.tail {
-		e.tail = entry.Index - 1
+	if entry.Index > e.tail && entry.Index-e.tail != 1 {
+		panic(fmt.Errorf("invalid add sequence. tail %d. next %d", e.tail, entry.Index))
 	}
-
-	pos := e.tail % e.Capacity()
+	pos := entry.Index % e.Capacity()
 	e.ring[pos] = entry
-	e.tail++
+	e.tail = entry.Index
+	if e.tail < e.head {
+		e.head = e.tail - 1
+	}
 	if e.tail-e.head > e.Capacity() {
 		e.head++
 	}
 }
 
 func (e *entriesCache) Get(index uint64) *types.Entry {
-	if index < e.head || index > e.tail {
+	if index <= e.head || index > e.tail {
 		return nil
 	}
 	return e.ring[index%e.Capacity()]

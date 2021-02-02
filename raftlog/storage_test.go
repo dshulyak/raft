@@ -80,9 +80,8 @@ func TestStorageRewrite(t *testing.T) {
 				Term:  uint64(term),
 			}))
 		}
+		require.NoError(t, store.Sync())
 	}
-
-	require.NoError(t, store.Sync())
 
 	for i := 1; i <= total; i++ {
 		entry, err := store.Get(uint64(i))
@@ -97,7 +96,7 @@ func TestStorageCorrupted(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		require.NoError(t, store.Append(&types.Entry{
 			Index: uint64(i),
-			Op:    make([]byte, 10),
+			Op:    []byte("hello"),
 		}))
 	}
 	require.NoError(t, store.Sync())

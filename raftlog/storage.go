@@ -122,7 +122,6 @@ func New(opts ...Option) (*Storage, error) {
 		return nil, fmt.Errorf("segment size can't be larger then %v", maxSegmentSize)
 	}
 
-	st.cache = newCache(st.conf.cacheSize)
 	st.conf.maxDirtyEntries = min(st.conf.maxDirtyEntries, st.conf.cacheSize)
 
 	segs, err := scanSegments(st.logger, st.conf)
@@ -144,6 +143,8 @@ func New(opts ...Option) (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
+	st.cache = newCache(st.conf.cacheSize, st.lastIndex)
+
 	return st, nil
 }
 
@@ -174,11 +175,14 @@ func (s *Storage) Get(i uint64) (*types.Entry, error) {
 		return nil, ErrEntryFromFuture
 	}
 
-	entry := s.cache.Get(i - 1)
+	entry := s.cache.Get(i)
 	if entry != nil {
 		return entry, nil
 	}
+	return s.get(i)
+}
 
+func (s *Storage) get(i uint64) (*types.Entry, error) {
 	ie := s.idx.Get(i)
 	return s.segs.get(&ie)
 }
@@ -197,7 +201,7 @@ func (s *Storage) Last() (entry *types.Entry, err error) {
 		err = ErrEmptyLog
 		return
 	}
-	entry = s.cache.Get(s.lastIndex - 1)
+	entry = s.cache.Get(s.lastIndex)
 	if entry != nil {
 		return
 	}
@@ -242,7 +246,7 @@ func (s *Storage) flush() (err error) {
 		var (
 			offset int
 		)
-
+		fmt.Println(entry)
 		offset, _, err = s.segs.append(entry)
 		if err != nil {
 			return false
