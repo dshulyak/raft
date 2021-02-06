@@ -91,9 +91,9 @@ func WithLogger(lvl string) ConfigOption {
 
 var DefaultConfig = Config{
 	FeatureFlags:           FeaturePreVote,
-	EntriesPerAppend:       128,
-	ProposalsBuffer:        2048,
-	PendingProposalsBuffer: 2048,
+	EntriesPerAppend:       1028,
+	ProposalsBuffer:        4096,
+	PendingProposalsBuffer: 4096,
 	DialTimeout:            200 * time.Millisecond,
 	Backoff:                200 * time.Millisecond,
 	TickInterval:           20 * time.Millisecond,
