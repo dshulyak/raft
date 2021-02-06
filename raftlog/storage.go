@@ -143,6 +143,7 @@ func New(opts ...Option) (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
+	st.flushed = st.lastIndex
 	st.cache = newCache(st.conf.cacheSize, st.lastIndex)
 
 	return st, nil
