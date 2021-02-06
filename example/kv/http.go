@@ -72,6 +72,7 @@ func (s *server) Get(w http.ResponseWriter, r *http.Request) {
 		handleError(w, r, err)
 		return
 	}
+	req.Release()
 	val, set := s.app.Get(key)
 	if !set {
 		http.Error(w, "Value is not set.", http.StatusNotFound)
@@ -114,6 +115,7 @@ func (s *server) Write(w http.ResponseWriter, r *http.Request) {
 		handleError(w, r, err)
 		return
 	}
+	req.Release()
 	_, err = fmt.Fprintf(w, "%v\n", rst)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
