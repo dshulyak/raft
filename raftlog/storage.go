@@ -246,7 +246,6 @@ func (s *Storage) flush() (err error) {
 		var (
 			offset int
 		)
-		fmt.Println(entry)
 		offset, _, err = s.segs.append(entry)
 		if err != nil {
 			return false
