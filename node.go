@@ -195,24 +195,6 @@ func (n *Node) msgPipeline(id NodeID, msg Message) {
 	_ = n.push(msg)
 }
 
-type WriteRequest interface {
-	// Wait completes when the entry is commited.
-	// Or with error if:
-	// - leader has stepped down
-	// - queue overflow
-	// - redirect to a new leader
-	Wait(context.Context) error
-	// WaitResult completes when the entry is applied.
-	// Will not complete succesfully if Wait failed.
-	WaitResult(context.Context) (interface{}, error)
-}
-
-type ReadRequest interface {
-	// Wait completes when read is safe to execute.
-	// Otherwise may fail with same reasons as WriteRequest.
-	Wait(context.Context) error
-}
-
 func (n *Node) Propose(ctx context.Context, data []byte) (WriteRequest, error) {
 	proposal := newWriteRequest(n.ctx,
 		&raftlog.Entry{
