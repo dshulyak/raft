@@ -70,9 +70,6 @@ func (s *lastMessageChannel) Run() (err error) {
 		case <-s.ctx.Done():
 			return
 		case next := <-s.in:
-			if msg != nil {
-				s.logger.Debugw("message is dropped", "body", msg)
-			}
 			msg = next
 		case out <- msg:
 			msg = nil
