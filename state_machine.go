@@ -347,7 +347,8 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	}
 	f.resetElectionTimeout()
 	f.resetLinkTimeout()
-	// printing hearbeats is too chatty
+
+	// TODO i need trace level
 	if len(msg.Entries) > 0 {
 		f.logger.Debugw("append entries", "msg", msg)
 	}
@@ -619,7 +620,7 @@ type readReq struct {
 }
 
 func toLeader(s *raftState, u *Update) *leader {
-	s.logger.Debugw("leader is elected", "id", s.id, "term", s.Term)
+	s.logger.Infow("leader is elected", "id", s.id, "term", s.Term)
 	l := leader{
 		raftState:          s,
 		matchIndex:         newMatch(len(s.configuration.Nodes)),

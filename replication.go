@@ -90,7 +90,7 @@ func (r *replicationChannel) Run() (err error) {
 				// on response update internal state and,
 				// schedule next message without overwriting current
 				//
-				// overwriting is prohibited so that we don't overwrite
+				// overwriting is not allowed so that we don't overwrite
 				// already fetched messages
 				r.peer.onResponse(m)
 				if next == nil {

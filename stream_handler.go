@@ -105,6 +105,7 @@ func (p *streamHandler) writer(stream MsgStream, closer chan struct{}) error {
 }
 
 func (p *streamHandler) handle(stream MsgStream) {
+	p.logger.Debugw("connected with peer", "id", stream.ID())
 	var wg sync.WaitGroup
 	wg.Add(2)
 	errc := make(chan error, 2)
@@ -128,4 +129,5 @@ func (p *streamHandler) handle(stream MsgStream) {
 		}
 	}
 	wg.Wait()
+	p.logger.Debugw("disconnected with peer", "id", stream.ID())
 }
