@@ -17,13 +17,14 @@ func newReplicationChannel(parent context.Context,
 ) *replicationChannel {
 	ctx, cancel := context.WithCancel(parent)
 	return &replicationChannel{
-		ctx:    ctx,
-		cancel: cancel,
-		logger: logger,
-		tick:   tick,
-		out:    out,
-		in:     make(chan Message, 1),
-		peer:   peer,
+		ctx:       ctx,
+		cancel:    cancel,
+		logger:    logger,
+		tick:      tick,
+		out:       out,
+		in:        make(chan Message, 1),
+		responses: make(chan Message, 1),
+		peer:      peer,
 	}
 }
 
@@ -34,8 +35,9 @@ type replicationChannel struct {
 
 	tick time.Duration
 
-	in  chan Message
-	out chan<- Message
+	in        chan Message
+	responses chan Message
+	out       chan<- Message
 
 	peer *replicationState
 }
@@ -45,6 +47,14 @@ func (r *replicationChannel) Send(msg Message) {
 	case <-r.ctx.Done():
 		return
 	case r.in <- msg:
+	}
+}
+
+func (r *replicationChannel) Response(msg Message) {
+	select {
+	case <-r.ctx.Done():
+		return
+	case r.responses <- msg:
 	}
 }
 
@@ -84,7 +94,7 @@ func (r *replicationChannel) Run() (err error) {
 			if initialized && next == nil {
 				next = r.peer.next()
 			}
-		case msg := <-r.in:
+		case msg := <-r.responses:
 			switch m := msg.(type) {
 			case *types.AppendEntriesResponse:
 				// on response update internal state and,
@@ -96,6 +106,9 @@ func (r *replicationChannel) Run() (err error) {
 				if next == nil {
 					next = r.peer.next()
 				}
+			}
+		case msg := <-r.in:
+			switch m := msg.(type) {
 			case *types.AppendEntries:
 				// TODO check if it is possible to merge init and update
 				if !initialized {

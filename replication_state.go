@@ -143,18 +143,23 @@ func (p *replicationState) onResponse(m *AppendEntriesResponse) {
 		p.prevLog = m.LastLog
 		return
 	}
+	p.logger.Debugw("received response with failure", "msg", m)
+
 	p.pipeline = false
 
-	if p.prevLog.Index == 0 {
-		p.prevLog.Term = 0
-	} else {
+	if p.prevLog.Index > 0 {
 		p.prevLog.Index -= 1
-		entry, err := p.log.Get(p.prevLog.Index)
-		if err != nil {
-			p.logger.Panicw("failed to get log", "index", p.prevLog.Index, "error", err)
+		var term uint64
+		if p.prevLog.Index > 0 {
+			entry, err := p.log.Get(p.prevLog.Index)
+			if err != nil {
+				p.logger.Panicw("failed to get log", "index", p.prevLog.Index, "error", err)
+			}
+			term = entry.Term
 		}
-		p.prevLog.Term = entry.Term
+		p.prevLog.Term = term
 	}
+
 	p.sentLog = p.prevLog
 }
 

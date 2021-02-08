@@ -22,13 +22,13 @@ var (
 	ErrStopped = errors.New("node is stopped")
 )
 
-type bufferedProposals struct {
+type bufferedRequests struct {
 	max int
 	in  chan *request
 	out chan []*request
 }
 
-func (b bufferedProposals) run(ctx context.Context) {
+func (b bufferedRequests) run(ctx context.Context) {
 	var (
 		batch []*request
 		out   chan []*request
@@ -255,7 +255,7 @@ func (n *Node) run() (err error) {
 		appC    chan<- *appUpdate
 	)
 	runTicker(n.ctx, timeout, n.tick)
-	go bufferedProposals{
+	go bufferedRequests{
 		out: proposals,
 		in:  n.proposals,
 		max: n.maxProposals,

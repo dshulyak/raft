@@ -49,6 +49,8 @@ func (s *lastMessageChannel) Send(msg Message) {
 	}
 }
 
+func (s *lastMessageChannel) Response(msg Message) {}
+
 func (s *lastMessageChannel) Close() {
 	s.cancel()
 }
@@ -80,6 +82,7 @@ func (s *lastMessageChannel) Run() (err error) {
 
 type peerDeliveryChannel interface {
 	Send(Message)
+	Response(Message)
 	Close()
 	Run() error
 }
@@ -88,8 +91,9 @@ type peerDeliveryChannel interface {
 // - in leader state it will run replication channel
 //   that will either restore follower logs or send append entries in pipelined mode
 // - in follower and candidate state it will run channel that buffers last sent message
-//   and delivers it once the stream is opened/restored
-// in both cases peerMailbox is a non-blocking layer before the network
+//   and delivers it once the stream exists
+//
+// in both cases peerMailbox is a non-blocking buffering layer between consensus and network layers.
 type peerMailbox struct {
 	peerID  types.NodeID
 	ctx     context.Context
@@ -141,9 +145,7 @@ func (m *peerMailbox) Update(global *Config, state RaftState) {
 func (m *peerMailbox) Response(msg Message) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.state == RaftLeader {
-		m.current.Send(msg)
-	}
+	m.current.Response(msg)
 	return
 }
 

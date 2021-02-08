@@ -362,6 +362,9 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 	} else if !empty && msg.PrevLog.Index > 0 {
 		entry, err := f.log.Get(msg.PrevLog.Index)
 		if errors.Is(err, raftlog.ErrEntryFromFuture) {
+			f.logger.Debugw("log update is rejected. entry is not in the log",
+				"msg", msg,
+			)
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
 				Follower: f.id,
@@ -371,10 +374,8 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			f.must(err, "failed to get log entry")
 		}
 		if entry.Term != msg.PrevLog.Term {
-			f.logger.Debugw("log update is rejected",
-				"local term", entry.Term,
-				"leader term", msg.PrevLog.Term,
-				"index", msg.PrevLog.Index,
+			f.logger.Debugw("log update is rejected. different term on a previous log",
+				"msg", msg,
 			)
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
