@@ -96,7 +96,10 @@ func (p *replicationState) next() *AppendEntries {
 
 	p.logger.Debugw("replicate next batch of entries", "next", nextIndex,
 		"count", d,
-		"last log", p.lastLog)
+		"last log", p.lastLog,
+		"prev log", p.prevLog,
+		"seng log", p.sentLog,
+	)
 	for i := 0; i < int(d); i++ {
 		entry, err := p.log.Get(nextIndex)
 		if err != nil {
@@ -104,8 +107,7 @@ func (p *replicationState) next() *AppendEntries {
 		}
 		entries[i] = entry
 		if entry.Index != uint64(nextIndex) {
-			p.logger.Errorw("unexepected index for returned entry", "expected", nextIndex, "got", entry)
-			panic("index is corrupted")
+			p.logger.Panicw("unexepected index for returned entry", "expected", nextIndex, "got", entry)
 		}
 		nextIndex++
 	}
@@ -142,10 +144,11 @@ func (p *replicationState) onResponse(m *AppendEntriesResponse) {
 		return
 	}
 	p.pipeline = false
-	p.prevLog.Index -= 1
+
 	if p.prevLog.Index == 0 {
 		p.prevLog.Term = 0
 	} else {
+		p.prevLog.Index -= 1
 		entry, err := p.log.Get(p.prevLog.Index)
 		if err != nil {
 			p.logger.Panicw("failed to get log", "index", p.prevLog.Index, "error", err)

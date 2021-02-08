@@ -107,6 +107,9 @@ func (r *replicationChannel) Run() (err error) {
 				}
 			}
 		case out <- next:
+			if len(next.Entries) > 0 {
+				r.logger.Debugw("sent append entries", "msg", next)
+			}
 			next = r.peer.next()
 		}
 	}

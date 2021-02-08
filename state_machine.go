@@ -371,6 +371,11 @@ func (f *follower) onAppendEntries(msg *AppendEntries, u *Update) role {
 			f.must(err, "failed to get log entry")
 		}
 		if entry.Term != msg.PrevLog.Term {
+			f.logger.Debugw("log update is rejected",
+				"local term", entry.Term,
+				"leader term", msg.PrevLog.Term,
+				"index", msg.PrevLog.Index,
+			)
 			f.send(u, &AppendEntriesResponse{
 				Term:     f.Term,
 				Follower: f.id,
