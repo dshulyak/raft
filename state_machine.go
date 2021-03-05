@@ -435,7 +435,7 @@ func (f *follower) onRequestVote(msg *RequestVote, u *Update) role {
 		f.VotedFor = None
 		sync = true
 	}
-	// ignoring link timeout if it is no a pre-vote phase, if next candidate
+	// ignoring link timeout if it is not a pre-vote phase, if next candidate
 	// term is higher then the current leader term it will disrupt current leader
 	// so it is better to switch to a new leader immediatly
 	if msg.PreVote && f.linkTimeout > 0 {
